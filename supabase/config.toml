@@ -1,0 +1,63 @@
+# Stable local Supabase project identity used to distinguish Docker resources on this host.
+project_id = "ccb-core"
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed/radar_v1.sql"]
+
+[functions.github-bus-ingest]
+# We receive GitHub Actions OIDC tokens here (not Supabase session JWTs),
+# so we keep `verify_jwt = false` to avoid the platform's built-in JWT check.
+# handler.ts MUST perform full verification of the GitHub OIDC token at runtime:
+#  - Validate token signature (via GitHub JWKS)
+#  - Validate claims: iss (issuer), aud (audience), exp (expiry), and any
+#    repository/workflow/ref/sha claims your workflows rely on
+#  - Reject tokens that don't meet those checks
+#
+# Rationale: Supabase's `verify_jwt` is intended for Supabase-issued JWTs.
+# GitHub Actions issues short-lived OIDC tokens that your function must
+# validate itself. Leaving this explicit helps future reviewers understand
+# why verification is handled in code (handler.ts) instead of by Supabase.
+verify_jwt = false
+
+# Recommended runtime configuration (DO NOT commit real secrets).
+# Set these variables in Supabase's environment/secret manager or your
+# deployment pipeline and read them from handler.ts. The following are
+# example placeholders to document what the function needs.
+#
+# Example (replace with your values and keep them out of source control):
+# env = {
+#   # GitHub OIDC issuer (GitHub's token service)
+#   GHA_OIDC_ISSUER = "https://token.actions.githubusercontent.com",
+#
+#   # The audience you request in your workflow's id-token call (or "api://default")
+#   ALLOWED_AUDIENCE = "api://default",
+#
+#   # Restrict tokens to a single repository for safety
+#   ALLOWED_REPOSITORY = "example/ccb-core",
+#
+#   # Optionally restrict to a workflow file name
+#   ALLOWED_WORKFLOW = "ci/workflows/github-bus-ingest.yml",
+#
+#   # Optionally restrict to a branch or ref prefix (e.g. refs/heads/main)
+#   ALLOWED_REF_PREFIX = "refs/heads/main",
+#
+#   # JWKS URL used to validate token signatures
+#   JWKS_URL = "https://token.actions.githubusercontent.com/.well-known/jwks",
+#
+#   # Toggle relaxed test mode when running locally/in CI ("true"/"false")
+#   RELAXED_TEST_MODE = "false",
+# }
+#
+# Implementation notes for handler.ts (keep these checks in code):
+#  - Fetch and cache the JWKS (respect Cache-Control). Refresh on unknown `kid`.
+#  - Use a vetted library (e.g. `jose`) to validate signatures and claims.
+#  - Validate `iss` and `aud` exactly; validate `exp` and `nbf` if present.
+#  - Validate repository/workflow/ref/sha claims to limit token scope.
+#  - Log successful and failed verification attempts (no secrets in logs).
+#  - Add unit/integration tests for invalid/malformed/expired tokens.
+#
+# Operational guidance:
+#  - Keep JWKS and audience values documented in your deployment README.
+#  - If you later switch to accepting Supabase session JWTs, set
+#    `verify_jwt = true` and rely on the platform's verification instead.

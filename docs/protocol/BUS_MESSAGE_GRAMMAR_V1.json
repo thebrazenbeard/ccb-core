@@ -1,0 +1,42 @@
+{
+  "contract": "BUS_MESSAGE_GRAMMAR_V1",
+  "encoding": "UTF-8",
+  "document_forms": ["inline_headers", "yaml_style_frontmatter"],
+  "header_keys": {
+    "normalization": "ASCII casefold; '-' becomes '_'",
+    "duplicates": "reject after normalization",
+    "values": "trim; unwrap one matching pair of backticks, single quotes, or double quotes"
+  },
+  "frontmatter": {
+    "delimiter": "---",
+    "scalar_headers_only": true,
+    "indented_and_list_continuations": "provenance_only"
+  },
+  "required_headers": ["message_id", "writer"],
+  "recipient_header": {
+    "canonical": "intended_recipient",
+    "legacy_alias": "intended_recipients",
+    "alias_semantics": "plural alias normalizes to canonical intended_recipient",
+    "simultaneous_keys": "reject with CONFLICTING_INTENDED_RECIPIENT_HEADERS"
+  },
+  "booleans": {
+    "true": ["true", "yes", "1"],
+    "false": ["false", "no", "0"],
+    "missing_or_empty": false,
+    "other": "reject"
+  },
+  "created_at": {
+    "date_only": "YYYY-MM-DD -> YYYY-MM-DDT00:00:00Z",
+    "datetime": "must include Z or an explicit UTC offset",
+    "timezone_less_datetime": "reject for new admission",
+    "historical_projection_exception": "may use immutable source commit time, with created_at_basis=source_commit_invalid_header"
+  },
+  "body": {
+    "starts_after": "header block and separating blank lines",
+    "conversation_closed_by_sender": "last non-whitespace body line is exactly #ENDTHREAD"
+  },
+  "hashes": {
+    "full_sha256": "SHA-256 of exact original UTF-8 bytes",
+    "body_sha256": "SHA-256 of exact parsed body UTF-8 bytes"
+  }
+}

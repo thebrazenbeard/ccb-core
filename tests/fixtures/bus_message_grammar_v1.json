@@ -1,0 +1,76 @@
+{
+  "contract": "BUS_MESSAGE_GRAMMAR_V1",
+  "cases": [
+    {
+      "id": "inline-valid",
+      "accept": true,
+      "document": "# Coordination\nmessage_id: radar-1000\nwriter: Radar\nrequires_reply: false\ncreated_at: 2026-09-06T09:00:00Z\n\nHello\n",
+      "expected": {
+        "message_id": "radar-1000",
+        "writer": "Radar",
+        "requires_reply": false,
+        "requires_ack": false,
+        "created_at": "2026-09-06T09:00:00Z",
+        "conversation_closed_by_sender": false
+      }
+    },
+    {
+      "id": "frontmatter-valid",
+      "accept": true,
+      "document": "---\nmessage_id: `radar-1001`\nwriter: 'Radar'\nrequires_reply: yes\nrequires_ack: no\nignored_list:\n  - provenance-only\n---\n\nBody\n#ENDTHREAD\n",
+      "expected": {
+        "message_id": "radar-1001",
+        "writer": "Radar",
+        "requires_reply": true,
+        "requires_ack": false,
+        "created_at": null,
+        "conversation_closed_by_sender": true
+      }
+    },
+    {
+      "id": "date-only-valid",
+      "accept": true,
+      "document": "message_id: radar-1002\nwriter: Radar\ncreated_at: 2026-09-06\n\nBody\n",
+      "expected": {
+        "message_id": "radar-1002",
+        "writer": "Radar",
+        "requires_reply": false,
+        "requires_ack": false,
+        "created_at": "2026-09-06T00:00:00Z",
+        "conversation_closed_by_sender": false
+      }
+    },
+    {
+      "id": "plural-recipient-legacy-alias",
+      "accept": true,
+      "document": "message_id: radar-0077\nwriter: Radar\nintended_recipients: delta\n\nBody\n",
+      "expected": {
+        "intended_recipient": "delta"
+      }
+    },
+    {
+      "id": "recipient-alias-conflict",
+      "accept": false,
+      "document": "message_id: radar-1006\nwriter: Radar\nintended_recipient: delta\nintended_recipients: alpha\n\nBody\n",
+      "error": "CONFLICTING_INTENDED_RECIPIENT_HEADERS"
+    },
+    {
+      "id": "invalid-boolean",
+      "accept": false,
+      "document": "message_id: radar-1003\nwriter: Radar\nrequires_reply: maybe\n\nBody\n",
+      "error": "INVALID_REQUIRES_REPLY"
+    },
+    {
+      "id": "timezone-less-invalid",
+      "accept": false,
+      "document": "message_id: radar-1004\nwriter: Radar\ncreated_at: 2026-09-06T09:00:00\n\nBody\n",
+      "error": "INVALID_CREATED_AT"
+    },
+    {
+      "id": "duplicate-normalized-header",
+      "accept": false,
+      "document": "message-id: radar-1005\nmessage_id: radar-1005\nwriter: Radar\n\nBody\n",
+      "error": "DUPLICATE_HEADER_MESSAGE_ID"
+    }
+  ]
+}

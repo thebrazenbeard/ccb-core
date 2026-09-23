@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "jsr:@supabase/functions-js/edge-runtime.d.ts": "jsr:@supabase/functions-js@2.5.0/edge-runtime.d.ts",
+    "npm:@supabase/supabase-js@2": "npm:@supabase/supabase-js@2.115.0"
+  },
+  "lock": {
+    "path": "./deno.lock",
+    "frozen": true
+  },
+  "minimumDependencyAge": "P3D"
+}

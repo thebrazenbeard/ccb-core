@@ -1,0 +1,37 @@
+SOURCE-AVAILABLE PROPRIETARY LICENSE
+Version 1.0 — 2026-09-23
+
+Copyright (c) 2026 CCB Core contributors. All rights reserved.
+
+1. SCOPE
+This license governs original code, documentation, data structures, specifications, and other copyrightable material in this repository ("Licensed Material"). It does not replace a license that separately applies to third-party material.
+
+2. LIMITED NONCOMMERCIAL PERMISSION
+You may access, read, and make copies of the Licensed Material reasonably necessary for private evaluation, security review, interoperability assessment, education, research, or preparation of a proposed contribution, provided that you do not use the Licensed Material for a Commercial Purpose and do not remove copyright, attribution, or license notices.
+
+3. COMMERCIAL USE REQUIRES A SEPARATE LICENSE
+No commercial rights are granted. Prior written permission from the copyright holder is required for commercial exploitation, resale, paid deployment, hosted or managed service operation, commercial sublicensing, or incorporation into a commercial product or service.
+
+4. REDISTRIBUTION AND DERIVATIVE WORKS
+Except for rights that GitHub's Terms of Service independently require for GitHub features, this license does not grant permission to publish, redistribute, sublicense, or publicly provide derivative works. Private modifications for the noncommercial purposes allowed above are permitted.
+
+5. MACHINE LEARNING AND DATASET USE
+The Licensed Material may not be used as training data, fine-tuning data, or part of a commercially exploited code or content dataset without prior written permission.
+
+6. CONTRIBUTIONS
+Contributions remain subject to CONTRIBUTING.md and any applicable contribution terms.
+
+7. THIRD-PARTY MATERIAL
+Third-party material remains governed by its respective licenses and notices.
+
+8. NO PATENT OR TRADEMARK LICENSE
+No patent, trademark, trade-name, logo, or branding rights are granted except as required by applicable law or separate written agreement.
+
+9. TERMINATION
+Rights granted by this license terminate automatically upon material breach.
+
+10. DISCLAIMER
+THE LICENSED MATERIAL IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+11. COMMERCIAL LICENSING
+Commercial permission is available only through a separate written license from the copyright holder. See COMMERCIAL_LICENSE.md.

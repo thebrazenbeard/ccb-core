@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chat-communication-bus.local/schemas/VISUAL_IDENTITY_V1.schema.json",
+  "title": "VISUAL_IDENTITY_V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identity_id", "display_name", "style_contract", "current", "active_candidate", "assets"],
+  "properties": {
+    "identity_id": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+    "display_name": {"type": "string", "minLength": 1},
+    "style_contract": {"const": "BUS_AVATAR_STYLE_V1"},
+    "current": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "portrait": {"type": "string", "minLength": 1},
+        "bus_avatar": {"type": "string", "minLength": 1},
+        "character": {"type": "string", "minLength": 1}
+      }
+    },
+    "active_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "portrait": {"type": "string", "minLength": 1},
+        "bus_avatar": {"type": "string", "minLength": 1},
+        "character": {"type": "string", "minLength": 1}
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset_id", "scope", "state", "path", "sha256", "claimed_by", "claim_type", "claimed_at", "source_ref"],
+        "properties": {
+          "asset_id": {"type": "string", "minLength": 1},
+          "scope": {"enum": ["portrait", "bus_avatar", "character"]},
+          "state": {"enum": ["PLACEHOLDER", "CANDIDATE", "CANONICAL", "RETIRED"]},
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "claimed_by": {"type": "string", "minLength": 1},
+          "claim_type": {"enum": ["self", "operator_override", "system_placeholder"]},
+          "claimed_at": {"type": "string", "minLength": 1},
+          "source_ref": {"type": "string", "minLength": 1},
+          "supersedes": {"type": ["string", "null"]},
+          "retired_at": {"type": ["string", "null"]},
+          "review_after": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}
