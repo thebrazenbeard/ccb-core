@@ -1,3 +1,5 @@
+[Reading 288 lines from start (total: 288 lines, 0 remaining)]
+
 """Versioned, transport-neutral Radar message envelope."""
 
 from __future__ import annotations
@@ -98,22 +100,14 @@ class RadarEnvelope:
         if errors:
             return EnvelopeResult(EnvelopeClassification.REJECTED, None, tuple(errors))
 
-        # bool is an int subclass in Python. It is never a valid schema version.
+        # Wire schema numbers are exact JSON integers. Do not silently coerce
+        # booleans, strings, or fractional floats through int(...).
         schema_raw = raw["schema_version"]
-        if isinstance(schema_raw, bool):
+        if type(schema_raw) is not int or schema_raw != 1:
             return EnvelopeResult(
                 EnvelopeClassification.REJECTED, None, ("schema_version",)
             )
-        try:
-            schema_version = int(schema_raw)
-        except (TypeError, ValueError):
-            return EnvelopeResult(
-                EnvelopeClassification.REJECTED, None, ("schema_version",)
-            )
-        if schema_version != 1:
-            return EnvelopeResult(
-                EnvelopeClassification.REJECTED, None, ("schema_version",)
-            )
+        schema_version = schema_raw
 
         sender = _required_text(raw.get("sender"), "sender", errors, casefold=False)
         domain = _required_text(raw.get("domain"), "domain", errors, casefold=True)
@@ -171,20 +165,18 @@ class RadarEnvelope:
             errors.append("audience")
             audience = ()
 
-        priority_obj = raw.get("priority")
-        if priority_obj is None:
+        if "priority" not in raw:
             priority = DEFAULT_PRIORITY
             normalized = True
-        elif isinstance(priority_obj, bool):
-            priority = MIN_PRIORITY - 1
-            errors.append("priority")
         else:
-            try:
-                priority = int(priority_obj)
-            except (TypeError, ValueError):
+            priority_obj = raw["priority"]
+            if type(priority_obj) is not int:
                 priority = MIN_PRIORITY - 1
-            if not (MIN_PRIORITY <= priority <= MAX_PRIORITY):
                 errors.append("priority")
+            else:
+                priority = priority_obj
+                if not (MIN_PRIORITY <= priority <= MAX_PRIORITY):
+                    errors.append("priority")
 
         requires_ack_obj = raw.get("requires_ack", False)
         if not isinstance(requires_ack_obj, bool):

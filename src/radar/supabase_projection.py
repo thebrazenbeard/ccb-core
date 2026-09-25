@@ -1,3 +1,5 @@
+[Reading 221 lines from start (total: 221 lines, 0 remaining)]
+
 """Pure provider-projection commands for Radar's Supabase adapter.
 
 This module contains no credentials and performs no network I/O. It translates
@@ -9,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping
+
+from .envelope import ALLOWED_DOMAINS, ALLOWED_INTENTS
 
 
 _ALLOWED_SCHEMAS = {"radar"}
@@ -106,22 +110,30 @@ def build_projection_commands(state: Mapping[str, object]) -> tuple[ProjectionCo
     for raw in subscriptions:
         record = _mapping(raw, "SUBSCRIPTION_PROJECTION_MUST_BE_MAPPING")
         identity_id = _required_text(record, "identity_id", "IDENTITY_ID_REQUIRED")
-        domain = _required_text(record, "domain", "DOMAIN_REQUIRED")
+        domain = _required_text(record, "domain", "DOMAIN_REQUIRED").casefold()
+        if domain not in ALLOWED_DOMAINS:
+            raise ProjectionError("UNKNOWN_DOMAIN", f"unrecognized Radar domain: {domain}")
+
         intent_obj = record.get("intent")
-        if intent_obj is not None and not isinstance(intent_obj, str):
-            raise ProjectionError("INVALID_INTENT", f"intent must be a string, got {type(intent_obj).__name__}")
-        intent = intent_obj.strip().casefold() if isinstance(intent_obj, str) and intent_obj.strip() else None
+        if intent_obj is None:
+            intent = None
+        elif not isinstance(intent_obj, str) or not intent_obj.strip():
+            raise ProjectionError(
+                "INVALID_INTENT",
+                f"intent must be a non-empty string or null, got {type(intent_obj).__name__}",
+            )
+        else:
+            intent = intent_obj.strip().casefold()
+            if intent not in ALLOWED_INTENTS:
+                raise ProjectionError("UNKNOWN_INTENT", f"unrecognized Radar intent: {intent}")
 
         priority_obj = record.get("min_priority", 3)
-        if isinstance(priority_obj, bool):
-            raise ProjectionError("INVALID_PRIORITY", "min_priority must be an integer from 0 through 4")
-        try:
-            min_priority = int(priority_obj)
-        except (TypeError, ValueError) as exc:
+        if type(priority_obj) is not int:
             raise ProjectionError(
                 "INVALID_PRIORITY",
                 f"min_priority must be an integer from {_MIN_PRIORITY} through {_MAX_PRIORITY}",
-            ) from exc
+            )
+        min_priority = priority_obj
         if not _MIN_PRIORITY <= min_priority <= _MAX_PRIORITY:
             raise ProjectionError(
                 "INVALID_PRIORITY",
@@ -144,7 +156,7 @@ def build_projection_commands(state: Mapping[str, object]) -> tuple[ProjectionCo
                 ),
                 {
                     "identity_id": identity_id.casefold(),
-                    "domain": domain.casefold(),
+                    "domain": domain,
                     "intent": intent,
                     "min_priority": min_priority,
                     "active": active_obj,

@@ -1,3 +1,5 @@
+[Reading 417 lines from start (total: 417 lines, 0 remaining)]
+
 """Radar logical identity, node, endpoint, and subscription registry."""
 
 from __future__ import annotations
@@ -5,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 import threading
 
+from .envelope import ALLOWED_DOMAINS, ALLOWED_INTENTS
 from .model import Endpoint, Identity, Node, NodeStatus, Subscription
 
 
@@ -31,16 +34,30 @@ def normalize_identifier(value: str) -> str:
 
 
 def _priority_value(value: object) -> int:
-    """Parse priority without accepting Python booleans as integers."""
-    if isinstance(value, bool):
+    """Require an exact integer priority in Radar's closed 0..4 domain."""
+    if type(value) is not int or not 0 <= value <= 4:
         raise RegistryError("INVALID_PRIORITY")
-    try:
-        priority = int(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise RegistryError("INVALID_PRIORITY") from exc
-    if not 0 <= priority <= 4:
-        raise RegistryError("INVALID_PRIORITY")
-    return priority
+    return value
+
+
+def _subscription_domain(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise RegistryError("DOMAIN_REQUIRED")
+    domain = value.strip().casefold()
+    if domain not in ALLOWED_DOMAINS:
+        raise RegistryError("UNKNOWN_DOMAIN")
+    return domain
+
+
+def _subscription_intent(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise RegistryError("INTENT_REQUIRED")
+    intent = value.strip().casefold()
+    if intent not in ALLOWED_INTENTS:
+        raise RegistryError("UNKNOWN_INTENT")
+    return intent
 
 
 def _millisecond_value(value: object, *, allow_none: bool = False) -> int | None:
@@ -248,16 +265,11 @@ class IdentityRegistry:
         min_priority: int = 3,
         enabled: bool = True,
     ) -> Subscription:
-        if not isinstance(domain, str) or not domain.strip():
-            raise RegistryError("DOMAIN_REQUIRED")
+        normalized_domain = _subscription_domain(domain)
         min_pr = _priority_value(min_priority)
         if not isinstance(enabled, bool):
             raise RegistryError("INVALID_SUBSCRIPTION_ENABLED")
-        normalized_intent: str | None = None
-        if intent is not None:
-            if not isinstance(intent, str) or not intent.strip():
-                raise RegistryError("INTENT_REQUIRED")
-            normalized_intent = intent.strip().casefold()
+        normalized_intent = _subscription_intent(intent)
 
         # Identity-name compatibility is safe only if target resolution and the
         # durable node-bound append observe one atomic registry state. The RLock
@@ -267,7 +279,7 @@ class IdentityRegistry:
             sub = Subscription(
                 node.node_id,
                 node.identity_id,
-                domain.strip().casefold(),
+                normalized_domain,
                 normalized_intent,
                 min_pr,
                 enabled,
@@ -284,15 +296,9 @@ class IdentityRegistry:
         intent: str | None = None,
     ) -> tuple[Subscription, ...]:
         """Return enabled node subscriptions accepting domain/intent/priority."""
-        if not isinstance(domain, str) or not domain.strip():
-            raise RegistryError("DOMAIN_REQUIRED")
+        key = _subscription_domain(domain)
         pr = _priority_value(priority)
-        key = domain.strip().casefold()
-        normalized_intent: str | None = None
-        if intent is not None:
-            if not isinstance(intent, str) or not intent.strip():
-                raise RegistryError("INTENT_REQUIRED")
-            normalized_intent = intent.strip().casefold()
+        normalized_intent = _subscription_intent(intent)
         with self._lock:
             return tuple(
                 sub

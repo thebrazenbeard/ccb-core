@@ -1,3 +1,5 @@
+[Reading 131 lines from start (total: 131 lines, 0 remaining)]
+
 import importlib
 import threading
 
@@ -75,20 +77,57 @@ def test_alias_collision_is_rechecked_under_lock_for_concurrent_registration():
     assert registry.resolve_identity_id("shared-alias") == successes[0].identity_id
 
 
-def test_subscription_priority_rejects_booleans_instead_of_int_coercion():
+@pytest.mark.parametrize("value", [True, 1.0, 1.9, "1"])
+def test_subscription_priority_rejects_non_integers_without_coercion(value):
     m = _module()
     r = m.IdentityRegistry()
     r.register_identity("one", display_name="One")
+    r.register_node(
+        "node-one",
+        identity_id="one",
+        last_heartbeat_ms=0,
+        lease_expires_ms=10,
+    )
     with pytest.raises(m.RegistryError, match="INVALID_PRIORITY"):
-        r.subscribe("one", domain="system", min_priority=True)
+        r.subscribe("node-one", domain="system", min_priority=value)
     with pytest.raises(m.RegistryError, match="INVALID_PRIORITY"):
-        r.subscriptions_for_domain("system", False)
+        r.subscriptions_for_domain("system", value)
+
+
+def test_subscription_taxonomy_is_closed_and_normalized():
+    m = _module()
+    r = m.IdentityRegistry()
+    r.register_identity("one", display_name="One")
+    r.register_node(
+        "node-one",
+        identity_id="one",
+        last_heartbeat_ms=0,
+        lease_expires_ms=10,
+    )
+
+    subscription = r.subscribe(
+        "node-one",
+        domain=" DATABASE ",
+        intent=" EVENT ",
+        min_priority=4,
+    )
+    assert subscription.domain == "database"
+    assert subscription.intent == "event"
+
+    with pytest.raises(m.RegistryError, match="UNKNOWN_DOMAIN"):
+        r.subscribe("node-one", domain="not-a-domain")
+    with pytest.raises(m.RegistryError, match="UNKNOWN_INTENT"):
+        r.subscribe("node-one", domain="database", intent="not-an-intent")
+    with pytest.raises(m.RegistryError, match="UNKNOWN_DOMAIN"):
+        r.subscriptions_for_domain("not-a-domain", 3)
+    with pytest.raises(m.RegistryError, match="UNKNOWN_INTENT"):
+        r.subscriptions_for_domain("database", 3, intent="not-an-intent")
 
 
 def test_endpoint_is_separate_from_identity_and_node():
     m = _module()
     r = m.IdentityRegistry()
     r.register_identity("radar", display_name="Radar")
-    r.register_endpoint("github-radar", identity_id="radar", transport="github", address="example/ccb-core")
+    r.register_endpoint("github-radar", identity_id="radar", transport="github", address="example/ccb-base")
     assert r.endpoint("github-radar").identity_id == "radar"
     assert r.identity("radar").identity_id == "radar"

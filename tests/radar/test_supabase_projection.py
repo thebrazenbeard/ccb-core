@@ -1,3 +1,5 @@
+[Reading 168 lines from start (total: 168 lines, 0 remaining)]
+
 import importlib
 import pytest
 
@@ -77,7 +79,8 @@ def test_provider_snapshot_parser_keeps_provider_state_as_projection():
     assert snapshot.canonical is False
 
 
-def test_invalid_subscription_priority_uses_projection_error_contract():
+@pytest.mark.parametrize("value", [True, 1.0, 1.9, "1", "urgent"])
+def test_invalid_subscription_priority_uses_projection_error_contract(value):
     m = _module()
     with pytest.raises(m.ProjectionError) as exc_info:
         m.build_projection_commands(
@@ -86,13 +89,40 @@ def test_invalid_subscription_priority_uses_projection_error_contract():
                     {
                         "identity_id": "radar",
                         "domain": "system",
-                        "min_priority": "urgent",
+                        "min_priority": value,
                         "active": True,
                     }
                 ]
             }
         )
     assert exc_info.value.code == "INVALID_PRIORITY"
+
+
+@pytest.mark.parametrize(
+    ("domain", "intent", "expected_code"),
+    [
+        ("not-a-domain", None, "UNKNOWN_DOMAIN"),
+        ("system", "not-an-intent", "UNKNOWN_INTENT"),
+        ("system", "", "INVALID_INTENT"),
+    ],
+)
+def test_projected_subscription_taxonomy_fails_closed(domain, intent, expected_code):
+    m = _module()
+    with pytest.raises(m.ProjectionError) as exc_info:
+        m.build_projection_commands(
+            {
+                "subscriptions": [
+                    {
+                        "identity_id": "radar",
+                        "domain": domain,
+                        "intent": intent,
+                        "min_priority": 3,
+                        "active": True,
+                    }
+                ]
+            }
+        )
+    assert exc_info.value.code == expected_code
 
 
 def test_subscription_active_must_be_boolean_not_truthy_string():

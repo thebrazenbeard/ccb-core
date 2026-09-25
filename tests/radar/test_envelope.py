@@ -1,3 +1,5 @@
+[Reading 121 lines from start (total: 121 lines, 0 remaining)]
+
 import importlib
 import pytest
 
@@ -42,7 +44,8 @@ def test_safe_defaults_are_explicitly_normalized():
     assert result.envelope.message_id.startswith("rad_")
 
 
-def test_boolean_schema_version_and_priority_are_not_accepted_as_integers():
+@pytest.mark.parametrize("value", [True, 1.0, 1.9, "1"])
+def test_non_integer_schema_versions_are_rejected_without_coercion(value):
     m = _module()
     base = {
         "schema_version": 1,
@@ -55,12 +58,50 @@ def test_boolean_schema_version_and_priority_are_not_accepted_as_integers():
         "priority": 2,
         "payload": {},
     }
-    schema_result = m.RadarEnvelope.from_mapping({**base, "schema_version": True})
-    priority_result = m.RadarEnvelope.from_mapping({**base, "priority": True})
-    assert schema_result.classification is m.EnvelopeClassification.REJECTED
-    assert schema_result.errors == ("schema_version",)
-    assert priority_result.classification is m.EnvelopeClassification.REJECTED
-    assert priority_result.errors == ("priority",)
+    result = m.RadarEnvelope.from_mapping({**base, "schema_version": value})
+    assert result.classification is m.EnvelopeClassification.REJECTED
+    assert result.errors == ("schema_version",)
+
+
+@pytest.mark.parametrize("value", [None, True, 1.0, 1.9, "1"])
+def test_non_integer_priorities_are_rejected_without_coercion(value):
+    m = _module()
+    base = {
+        "schema_version": 1,
+        "message_id": "m1",
+        "created_at": "2026-09-02T12:00:00Z",
+        "sender": "alpha",
+        "audience": ["radar"],
+        "domain": "coordination",
+        "intent": "event",
+        "priority": 2,
+        "payload": {},
+    }
+    result = m.RadarEnvelope.from_mapping({**base, "priority": value})
+    assert result.classification is m.EnvelopeClassification.REJECTED
+    assert result.errors == ("priority",)
+
+
+def test_omitted_priority_defaults_but_explicit_null_rejects():
+    m = _module()
+    base = {
+        "schema_version": 1,
+        "message_id": "m1",
+        "created_at": "2026-09-02T12:00:00Z",
+        "sender": "alpha",
+        "audience": ["radar"],
+        "domain": "coordination",
+        "intent": "event",
+        "payload": {},
+    }
+
+    omitted = m.RadarEnvelope.from_mapping(base)
+    explicit_null = m.RadarEnvelope.from_mapping({**base, "priority": None})
+
+    assert omitted.classification is m.EnvelopeClassification.NORMALIZED
+    assert omitted.envelope.priority == m.DEFAULT_PRIORITY
+    assert explicit_null.classification is m.EnvelopeClassification.REJECTED
+    assert explicit_null.errors == ("priority",)
 
 
 def test_source_refs_reject_empty_or_whitespace_entries():

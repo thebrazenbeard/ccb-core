@@ -1,3 +1,5 @@
+[Reading 865 lines from start (total: 865 lines, 0 remaining)]
+
 """Topology-bound, exact-head Git append primitive for Radar writer lanes.
 
 Concrete runtimes inject canonical control state, complete cross-generation
@@ -627,9 +629,10 @@ class SafeLaneAppender:
         if method is None:
             return None
         try:
-            return bool(method(candidate_sha, head_sha))
+            result = method(candidate_sha, head_sha)
         except Exception:
             return None
+        return result if type(result) is bool else None
 
     def _reconstruct_existing(
         self,
