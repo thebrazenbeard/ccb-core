@@ -1,5 +1,3 @@
-[Reading 10 lines from start (total: 10 lines, 0 remaining)]
-
 -- Keep derived provider evidence read-only to ordinary service-role callers.
 
 revoke insert, update, delete on table radar.delivery_events from service_role;

@@ -1,5 +1,3 @@
-[Reading 417 lines from start (total: 417 lines, 0 remaining)]
-
 """Radar logical identity, node, endpoint, and subscription registry."""
 
 from __future__ import annotations

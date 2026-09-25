@@ -1,5 +1,3 @@
-[Reading 25 lines from start (total: 25 lines, 0 remaining)]
-
 # CCB Base Public Boundary
 
 CCB Base is the operational, clean-history repository for reusable Chat Communication Bus and Radar mechanisms.

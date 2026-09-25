@@ -1,5 +1,3 @@
-[Reading 865 lines from start (total: 865 lines, 0 remaining)]
-
 """Topology-bound, exact-head Git append primitive for Radar writer lanes.
 
 Concrete runtimes inject canonical control state, complete cross-generation

@@ -1,5 +1,3 @@
-[Reading 36 lines from start (total: 36 lines, 0 remaining)]
-
 begin;
 
 do $$

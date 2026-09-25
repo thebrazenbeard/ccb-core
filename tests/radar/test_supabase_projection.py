@@ -1,5 +1,3 @@
-[Reading 168 lines from start (total: 168 lines, 0 remaining)]
-
 import importlib
 import pytest
 

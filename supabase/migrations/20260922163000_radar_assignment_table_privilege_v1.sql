@@ -1,5 +1,3 @@
-[Reading 8 lines from start (total: 8 lines, 0 remaining)]
-
 -- Enforce assignment/event mutation through reviewed SECURITY DEFINER functions.
 -- service_role may observe projection state but may not write these tables directly.
 

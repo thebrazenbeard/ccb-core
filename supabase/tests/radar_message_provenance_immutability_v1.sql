@@ -1,5 +1,3 @@
-[Reading 89 lines from start (total: 89 lines, 0 remaining)]
-
 begin;
 
 insert into radar.identities(identity_id, display_name, aliases)

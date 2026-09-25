@@ -1,5 +1,3 @@
-[Reading 29 lines from start (total: 29 lines, 0 remaining)]
-
 -- Keep projected message provenance append-only.
 -- projection_status is the only mutable canonical-message field.
 

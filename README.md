@@ -1,5 +1,3 @@
-[Reading 37 lines from start (total: 37 lines, 0 remaining)]
-
 # CCB Base
 
 This repository (`thebrazenbeard/ccb-core`) is the operational source of truth for the Chat Communication Bus and Radar runtime.

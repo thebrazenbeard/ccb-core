@@ -1,5 +1,3 @@
-[Reading 131 lines from start (total: 131 lines, 0 remaining)]
-
 import importlib
 import threading
 

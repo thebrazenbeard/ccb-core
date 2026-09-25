@@ -1,5 +1,3 @@
-[Reading 25 lines from start (total: 25 lines, 0 remaining)]
-
 # Repository Roles
 
 ## Canonical operational repository

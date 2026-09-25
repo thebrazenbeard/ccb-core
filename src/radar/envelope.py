@@ -1,5 +1,3 @@
-[Reading 288 lines from start (total: 288 lines, 0 remaining)]
-
 """Versioned, transport-neutral Radar message envelope."""
 
 from __future__ import annotations

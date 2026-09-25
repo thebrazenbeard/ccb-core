@@ -1,5 +1,3 @@
-[Reading 221 lines from start (total: 221 lines, 0 remaining)]
-
 """Pure provider-projection commands for Radar's Supabase adapter.
 
 This module contains no credentials and performs no network I/O. It translates
