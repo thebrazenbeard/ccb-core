@@ -24,6 +24,17 @@ CCB Base deliberately does **not** contain private mailbox history, named person
 
 A deployment supplies those as private overlays. Provider deployment, credentials, route activation, and private branch state are not implied by a CCB Base source change.
 
+## Deployment overlay inputs
+
+Public CCB Base entrypoints never assume private topology files exist inside this repository.
+
+The trusted projection and writer-lane validation CLIs require deployments to pass both private overlay paths explicitly:
+
+- `--topology <path>`
+- `--cutover <path>`
+
+This keeps reusable code public-safe and makes missing deployment state fail at CLI admission instead of later through an accidental file-not-found path.
+
 ## Verification
 
 ```powershell
