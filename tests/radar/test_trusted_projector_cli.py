@@ -17,3 +17,15 @@ def test_trusted_projector_cli_is_provider_neutral_ccb_base_entrypoint():
     )
     assert result.returncode == 0, result.stderr
     assert "--endpoint" in result.stdout
+
+
+def test_trusted_projector_requires_private_overlay_paths():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--endpoint", "http://example.invalid"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "--topology" in result.stderr
+    assert "--cutover" in result.stderr

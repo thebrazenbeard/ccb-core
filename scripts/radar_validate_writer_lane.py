@@ -10,18 +10,22 @@ from radar.writer_lanes import WriterLaneError, validate_writer_lane_commit
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TOPOLOGY = ROOT / "architecture" / "contracts" / "RADAR_TOPOLOGY_V1.json"
-DEFAULT_CUTOVER = ROOT / "architecture" / "contracts" / "RADAR_WRITER_LANE_V2_CUTOVER.json"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-dir", default=".")
     parser.add_argument("--ref", required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--base")
-    parser.add_argument("--topology", default=str(DEFAULT_TOPOLOGY))
-    parser.add_argument("--cutover", default=str(DEFAULT_CUTOVER))
+    parser.add_argument(
+        "--topology",
+        required=True,
+        help="Path to the deployment-supplied private writer-lane topology.",
+    )
+    parser.add_argument(
+        "--cutover",
+        required=True,
+        help="Path to the deployment-supplied private writer-lane cutover state.",
+    )
     parser.add_argument("--bootstrap-main")
     args = parser.parse_args(argv)
 

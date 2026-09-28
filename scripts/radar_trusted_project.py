@@ -206,11 +206,13 @@ def main() -> int:
     parser.add_argument("--repo-dir", default=str(ROOT))
     parser.add_argument(
         "--topology",
-        default=str(ROOT / "architecture/contracts/RADAR_TOPOLOGY_V1.json"),
+        required=True,
+        help="Path to the deployment-supplied private writer-lane topology.",
     )
     parser.add_argument(
         "--cutover",
-        default=str(ROOT / "architecture/contracts/RADAR_WRITER_LANE_V2_CUTOVER.json"),
+        required=True,
+        help="Path to the deployment-supplied private writer-lane cutover state.",
     )
     parser.add_argument("--event-path", default=os.environ.get("GITHUB_EVENT_PATH"))
     parser.add_argument("--event-name", default=os.environ.get("GITHUB_EVENT_NAME"))
