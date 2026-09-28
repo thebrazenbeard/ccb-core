@@ -16,3 +16,22 @@ def test_writer_lane_validator_cli_is_part_of_ccb_base():
     assert "--topology" in result.stdout
     assert "--cutover" in result.stdout
     assert "--bootstrap-main" in result.stdout
+
+
+def test_writer_lane_validator_requires_private_overlay_paths():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--ref",
+            "refs/heads/example",
+            "--head",
+            "0" * 40,
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "--topology" in result.stderr
+    assert "--cutover" in result.stderr
