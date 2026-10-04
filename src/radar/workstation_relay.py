@@ -18,9 +18,9 @@ _NONCE_RE = re.compile(r"^[A-Fa-f0-9]{32,128}$")
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 _CANARY_PREFIX = "BT2_CANARY:"
 _FORBIDDEN_CANARY_COMMAND = re.compile(
-    r"(?i)(?:^|[\\s])(?:sudo|rm|del|erase|format|powershell|pwsh|cmd(?:\\.exe)?|"
+    r"(?i)(?:^|\s)(?:sudo|rm|del|erase|format|powershell|pwsh|cmd(?:\.exe)?|"
     r"bash|python|curl|wget|git|gh|invoke-[a-z]+|start-[a-z]+|stop-[a-z]+)"
-    r"(?:$|[\\s])"
+    r"(?:$|\s)"
 )
 _FORBIDDEN_SHELL_CHARS = frozenset(";&|><`$")
 
