@@ -1,5 +1,7 @@
 import importlib.util
 
+import pytest
+
 
 def test_workstation_relay_module_is_shipped():
     assert importlib.util.find_spec("radar.workstation_relay") is not None
@@ -135,3 +137,267 @@ def test_verified_canary_follows_full_visible_text_state_machine():
     assert receipt.prewrite_selector_digest == receipt.presubmit_selector_digest
     assert target.submits == 1
     assert source_checks == ["bus-message-002"]
+
+
+class ScriptedTarget:
+    def __init__(
+        self,
+        *,
+        envelope,
+        snapshots,
+        discoveries=None,
+        rendered=True,
+        ack="valid",
+        fail_populate=False,
+        fail_submit=False,
+    ):
+        self.envelope = envelope
+        self.snapshots = list(snapshots)
+        self.discoveries = (
+            tuple(discoveries)
+            if discoveries is not None
+            else (self.snapshots[0],)
+        )
+        self.rendered = rendered
+        self.ack = ack
+        self.fail_populate = fail_populate
+        self.fail_submit = fail_submit
+        self.submits = 0
+        self.written = None
+        self.activated = []
+
+    def discover(self, expected):
+        return self.discoveries
+
+    def activate(self, window_handle):
+        self.activated.append(window_handle)
+
+    def snapshot(self, window_handle):
+        if not self.snapshots:
+            raise RuntimeError("target disappeared")
+        return self.snapshots.pop(0)
+
+    def populate(self, window_handle, text):
+        if self.fail_populate:
+            raise RuntimeError("write failed")
+        self.written = text
+
+    def submit(self, window_handle):
+        if self.fail_submit:
+            raise RuntimeError("submit failed")
+        self.submits += 1
+
+    def read_rendered(self, window_handle, message_id):
+        return self.written if self.rendered else None
+
+    def wait_for_ack(self, window_handle, message_id, timeout_seconds):
+        import radar.workstation_relay as relay
+        if self.ack == "valid":
+            return relay.render_ack(self.envelope, status="RECEIVED_VERIFIED")
+        if self.ack == "hold":
+            return relay.render_ack(self.envelope, status="HOLD_SOURCE_UNVERIFIED")
+        if self.ack == "wrong-nonce":
+            return relay.render_ack(
+                self.envelope, status="RECEIVED_VERIFIED"
+            ).replace(self.envelope.nonce, "0" * 32)
+        if self.ack == "wrong-digest":
+            return relay.render_ack(
+                self.envelope, status="RECEIVED_VERIFIED"
+            ).replace(self.envelope.body_sha256, "0" * 64)
+        return None
+
+
+def relay_fixture(message_id="one-two-edge-001"):
+    import radar.workstation_relay as relay
+    envelope = relay.RelayEnvelope.create(
+        sender="ONE",
+        recipient="TWO",
+        message_id=message_id,
+        nonce="1234567890abcdef1234567890abcdef",
+        source_bus_message_id="bus-edge-001",
+        source_bus_commit="c" * 40,
+        body="BT2_CANARY: inert edge probe",
+    )
+    descriptor = relay.TargetDescriptor(
+        recipient="TWO",
+        normalized_url_path="/c/two",
+        visible_identity="Two — Build Team Two",
+    )
+    snapshot = relay.TargetSnapshot(
+        window_handle=99,
+        normalized_url_path="/c/two",
+        visible_identity="Two — Build Team Two",
+    )
+    return relay, envelope, descriptor, snapshot
+
+
+def test_target_ambiguity_fails_before_composer_write():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-ambiguous")
+    other = relay.TargetSnapshot(
+        window_handle=100,
+        normalized_url_path=snapshot.normalized_url_path,
+        visible_identity=snapshot.visible_identity,
+    )
+    target = ScriptedTarget(
+        envelope=envelope,
+        snapshots=[snapshot],
+        discoveries=(snapshot, other),
+    )
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "TARGET_AMBIGUOUS"
+    assert target.written is None
+    assert target.submits == 0
+
+
+def test_target_drift_after_write_aborts_without_submit():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-drift")
+    drifted = relay.TargetSnapshot(
+        window_handle=99,
+        normalized_url_path="/c/someone-else",
+        visible_identity="Someone Else",
+    )
+    target = ScriptedTarget(
+        envelope=envelope,
+        snapshots=[snapshot, drifted],
+    )
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "TARGET_CHANGED_PRE_SUBMIT"
+    assert target.written is not None
+    assert target.submits == 0
+
+
+def test_target_disappearing_before_submit_fails_closed():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-disappears")
+    target = ScriptedTarget(envelope=envelope, snapshots=[snapshot])
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "TARGET_CHANGED_PRE_SUBMIT"
+    assert target.submits == 0
+
+
+def test_missing_rendered_readback_is_submitted_unverified_and_not_replayed():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-uncertain")
+    store = relay.RelayStore(":memory:")
+    first_target = ScriptedTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+        rendered=False,
+    )
+    engine = relay.WorkstationRelay(store, source_bus_verifier=lambda _: True)
+    first = engine.run(
+        envelope, descriptor=descriptor, target=first_target,
+        ack_timeout_seconds=1,
+    )
+    assert first.final_state == "SUBMITTED_UNVERIFIED"
+    assert first_target.submits == 1
+
+    second_target = ScriptedTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+    )
+    second = engine.run(
+        envelope, descriptor=descriptor, target=second_target,
+        ack_timeout_seconds=1,
+    )
+    assert second == first
+    assert second_target.submits == 0
+
+
+@pytest.mark.parametrize(
+    ("ack_mode", "expected"),
+    [
+        (None, "ACK_TIMEOUT"),
+        ("wrong-nonce", "ACK_MISMATCH"),
+        ("wrong-digest", "ACK_MISMATCH"),
+        ("hold", "SOURCE_BUS_UNVERIFIED"),
+    ],
+)
+def test_ack_failure_modes_do_not_promote_delivery(ack_mode, expected):
+    relay, envelope, descriptor, snapshot = relay_fixture(
+        "edge-ack-" + str(ack_mode)
+    )
+    target = ScriptedTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+        ack=ack_mode,
+    )
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == expected
+
+
+def test_unverified_bus_source_never_discovers_or_writes_target():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-source")
+    target = ScriptedTarget(envelope=envelope, snapshots=[snapshot, snapshot])
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: False,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "SOURCE_BUS_UNVERIFIED"
+    assert target.activated == []
+    assert target.written is None
+
+
+def test_target_recipient_mismatch_is_rejected_before_target_discovery():
+    relay, envelope, _descriptor, snapshot = relay_fixture("edge-recipient")
+    wrong = relay.TargetDescriptor(
+        recipient="THREE",
+        normalized_url_path="/c/three",
+        visible_identity="Three — Build Team Two",
+    )
+    target = ScriptedTarget(envelope=envelope, snapshots=[snapshot, snapshot])
+    with pytest.raises(relay.RelayError, match="TARGET_RECIPIENT_MISMATCH"):
+        relay.WorkstationRelay(
+            relay.RelayStore(":memory:"),
+            source_bus_verifier=lambda _: True,
+        ).run(envelope, descriptor=wrong, target=target, ack_timeout_seconds=1)
+    assert target.activated == []
+
+
+def test_receipt_contains_no_browser_auth_or_secret_fields():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-secret-free")
+    target = ScriptedTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+    )
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    serialized = str(receipt.to_dict()).lower()
+    for forbidden in ("cookie", "authorization", "bearer", "password", "profile_secret"):
+        assert forbidden not in serialized
+
+
+def test_canary_gate_rejects_command_like_or_unbounded_payloads():
+    import radar.workstation_relay as relay
+
+    bad_bodies = (
+        "echo hello",
+        "BT2_CANARY: sudo -n true",
+        "BT2_CANARY: rm -rf temp",
+        "BT2_CANARY: dir && whoami",
+        "BT2_CANARY: powershell -Command Get-Process",
+        "BT2_CANARY: " + ("x" * 600),
+    )
+    for index, body in enumerate(bad_bodies):
+        with pytest.raises(relay.RelayError, match="CANARY_CONTENT_REJECTED"):
+            relay.RelayEnvelope.create(
+                sender="ONE",
+                recipient="TWO",
+                message_id=f"unsafe-{index}",
+                nonce="abcdefabcdefabcdefabcdefabcdefab",
+                source_bus_message_id="bus-unsafe",
+                source_bus_commit="d" * 40,
+                body=body,
+            )
