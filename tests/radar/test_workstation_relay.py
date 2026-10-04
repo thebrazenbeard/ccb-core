@@ -742,3 +742,39 @@ def test_terminal_state_and_receipt_are_committed_atomically():
 
     assert receipt.final_state == "TARGET_NOT_FOUND"
     assert store.state_before_finalize == "BUS_BOUND"
+
+
+def test_rendered_readback_polls_before_declaring_submission_uncertain():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-render-delay")
+
+    class DelayedRenderedTarget(ScriptedTarget):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.reads = 0
+
+        def read_rendered(self, window_handle, target_token, message_id):
+            self.reads += 1
+            if self.reads < 3:
+                return None
+            return self.written
+
+    target = DelayedRenderedTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+    )
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(
+        envelope,
+        descriptor=descriptor,
+        target=target,
+        ack_timeout_seconds=1,
+        rendered_readback_timeout_seconds=0.1,
+        rendered_poll_seconds=0.001,
+    )
+
+    assert receipt.final_state == "ACK_VERIFIED"
+    assert receipt.rendered_message_verified is True
+    assert target.reads == 3
+    assert target.submits == 1
