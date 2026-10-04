@@ -574,3 +574,171 @@ def test_canary_admission_is_structured_marker_not_command_denylist(body):
             source_bus_commit="1" * 40,
             body=body,
         )
+
+
+def test_source_verifier_exception_finalizes_fail_closed_receipt():
+    import radar.workstation_relay as relay
+
+    envelope = relay.RelayEnvelope.create(
+        sender="ONE",
+        recipient="TWO",
+        message_id="source-exception",
+        nonce="11112222333344445555666677778888",
+        source_bus_message_id="bus-source-exception",
+        source_bus_commit="2" * 40,
+        body="BT2_CANARY: marker=source-exception",
+    )
+    descriptor = relay.TargetDescriptor(
+        recipient="TWO",
+        normalized_url_path="/c/two",
+        visible_identity="Two",
+    )
+    store = relay.RelayStore(":memory:")
+    engine = relay.WorkstationRelay(
+        store,
+        source_bus_verifier=lambda _: (_ for _ in ()).throw(
+            RuntimeError("source unavailable")
+        ),
+    )
+
+    receipt = engine.run(
+        envelope,
+        descriptor=descriptor,
+        target=object(),
+        ack_timeout_seconds=1,
+    )
+
+    assert receipt.final_state == "SOURCE_BUS_UNVERIFIED"
+    assert engine.run(
+        envelope,
+        descriptor=descriptor,
+        target=object(),
+        ack_timeout_seconds=1,
+    ) == receipt
+
+
+def test_target_discovery_exception_finalizes_not_found_receipt():
+    import radar.workstation_relay as relay
+
+    envelope = relay.RelayEnvelope.create(
+        sender="ONE",
+        recipient="TWO",
+        message_id="discover-exception",
+        nonce="22223333444455556666777788889999",
+        source_bus_message_id="bus-discover-exception",
+        source_bus_commit="3" * 40,
+        body="BT2_CANARY: marker=discover-exception",
+    )
+    descriptor = relay.TargetDescriptor(
+        recipient="TWO",
+        normalized_url_path="/c/two",
+        visible_identity="Two",
+    )
+
+    class Target:
+        def discover(self, expected):
+            raise RuntimeError("UIA unavailable")
+
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(
+        envelope,
+        descriptor=descriptor,
+        target=Target(),
+        ack_timeout_seconds=1,
+    )
+    assert receipt.final_state == "TARGET_NOT_FOUND"
+
+
+def test_target_activation_exception_finalizes_presubmit_failure():
+    import radar.workstation_relay as relay
+
+    envelope = relay.RelayEnvelope.create(
+        sender="ONE",
+        recipient="TWO",
+        message_id="activate-exception",
+        nonce="3333444455556666777788889999aaaa",
+        source_bus_message_id="bus-activate-exception",
+        source_bus_commit="4" * 40,
+        body="BT2_CANARY: marker=activate-exception",
+    )
+    descriptor = relay.TargetDescriptor(
+        recipient="TWO",
+        normalized_url_path="/c/two",
+        visible_identity="Two",
+    )
+    snapshot = relay.TargetSnapshot(
+        window_handle=9,
+        target_token="tab-nine",
+        normalized_url_path="/c/two",
+        visible_identity="Two",
+    )
+
+    class Target:
+        def discover(self, expected):
+            return (snapshot,)
+
+        def activate(self, window_handle, target_token):
+            raise RuntimeError("focus denied")
+
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(
+        envelope,
+        descriptor=descriptor,
+        target=Target(),
+        ack_timeout_seconds=1,
+    )
+    assert receipt.final_state == "TARGET_CHANGED_PRE_SUBMIT"
+
+
+def test_terminal_state_and_receipt_are_committed_atomically():
+    import radar.workstation_relay as relay
+
+    envelope = relay.RelayEnvelope.create(
+        sender="ONE",
+        recipient="TWO",
+        message_id="atomic-terminal",
+        nonce="444455556666777788889999aaaabbbb",
+        source_bus_message_id="bus-atomic-terminal",
+        source_bus_commit="5" * 40,
+        body="BT2_CANARY: marker=atomic-terminal",
+    )
+    descriptor = relay.TargetDescriptor(
+        recipient="TWO",
+        normalized_url_path="/c/two",
+        visible_identity="Two",
+    )
+
+    class InspectingStore(relay.RelayStore):
+        def __init__(self):
+            super().__init__(":memory:")
+            self.state_before_finalize = None
+
+        def finalize(self, **kwargs):
+            self.state_before_finalize = self.connection.execute(
+                "SELECT state FROM workstation_relay_operations "
+                "WHERE message_id = ?",
+                (kwargs["message_id"],),
+            ).fetchone()[0]
+            return super().finalize(**kwargs)
+
+    class Target:
+        def discover(self, expected):
+            return ()
+
+    store = InspectingStore()
+    receipt = relay.WorkstationRelay(
+        store,
+        source_bus_verifier=lambda _: True,
+    ).run(
+        envelope,
+        descriptor=descriptor,
+        target=Target(),
+        ack_timeout_seconds=1,
+    )
+
+    assert receipt.final_state == "TARGET_NOT_FOUND"
+    assert store.state_before_finalize == "BUS_BOUND"
