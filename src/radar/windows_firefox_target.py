@@ -36,6 +36,17 @@ class FirefoxUiDriver(Protocol):
     def read_visible_identity(
         self, window_handle: int, target_token: str
     ) -> str: ...
+    def write_composer(
+        self, window_handle: int, target_token: str, text: str
+    ) -> None: ...
+    def submit_composer(self, window_handle: int, target_token: str) -> None: ...
+    def read_rendered_message(
+        self, window_handle: int, target_token: str, message_id: str
+    ) -> str | None: ...
+    def wait_for_ack(
+        self, window_handle: int, target_token: str,
+        message_id: str, timeout_seconds: float
+    ) -> str | None: ...
 
 
 def normalize_chatgpt_path(value: str) -> str:
@@ -104,6 +115,56 @@ class WindowsFirefoxTarget:
             target_token=target_token,
             normalized_url_path=normalized_path,
             visible_identity=visible_identity,
+        )
+
+    def activate(self, window_handle: int, target_token: str | None) -> None:
+        if target_token is None or not target_token.strip():
+            raise FirefoxTargetError("TARGET_TOKEN_REQUIRED")
+        self.driver.select_tab(window_handle, target_token)
+
+    def populate(
+        self,
+        window_handle: int,
+        target_token: str | None,
+        text: str,
+    ) -> None:
+        if target_token is None or not target_token.strip():
+            raise FirefoxTargetError("TARGET_TOKEN_REQUIRED")
+        self.driver.write_composer(window_handle, target_token, text)
+
+    def submit(self, window_handle: int, target_token: str | None) -> None:
+        if target_token is None or not target_token.strip():
+            raise FirefoxTargetError("TARGET_TOKEN_REQUIRED")
+        self.driver.submit_composer(window_handle, target_token)
+
+    def read_rendered(
+        self,
+        window_handle: int,
+        target_token: str | None,
+        message_id: str,
+    ) -> str | None:
+        if target_token is None or not target_token.strip():
+            raise FirefoxTargetError("TARGET_TOKEN_REQUIRED")
+        return self.driver.read_rendered_message(
+            window_handle,
+            target_token,
+            message_id,
+        )
+
+    def wait_for_ack(
+        self,
+        window_handle: int,
+        target_token: str | None,
+        message_id: str,
+        timeout_seconds: float,
+    ) -> str | None:
+        if target_token is None or not target_token.strip():
+            raise FirefoxTargetError("TARGET_TOKEN_REQUIRED")
+        return self.driver.wait_for_ack(
+            window_handle,
+            target_token,
+            message_id,
+            timeout_seconds,
         )
 
 
