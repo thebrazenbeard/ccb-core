@@ -77,27 +77,27 @@ def test_verified_canary_follows_full_visible_text_state_machine():
             assert expected == descriptor
             return (snapshot,)
 
-        def activate(self, window_handle):
+        def activate(self, window_handle, target_token=None):
             assert window_handle == 41
 
-        def snapshot(self, window_handle):
+        def snapshot(self, window_handle, target_token=None):
             assert window_handle == 41
             return snapshot
 
-        def populate(self, window_handle, text):
+        def populate(self, window_handle, target_token, text):
             assert window_handle == 41
             self.written = text
 
-        def submit(self, window_handle):
+        def submit(self, window_handle, target_token=None):
             assert window_handle == 41
             self.submits += 1
 
-        def read_rendered(self, window_handle, message_id):
+        def read_rendered(self, window_handle, target_token, message_id):
             assert window_handle == 41
             assert message_id == envelope.message_id
             return self.written
 
-        def wait_for_ack(self, window_handle, message_id, timeout_seconds):
+        def wait_for_ack(self, window_handle, target_token, message_id, timeout_seconds):
             assert window_handle == 41
             assert message_id == envelope.message_id
             assert timeout_seconds == 5.0
@@ -169,28 +169,28 @@ class ScriptedTarget:
     def discover(self, expected):
         return self.discoveries
 
-    def activate(self, window_handle):
-        self.activated.append(window_handle)
+    def activate(self, window_handle, target_token=None):
+        self.activated.append((window_handle, target_token))
 
-    def snapshot(self, window_handle):
+    def snapshot(self, window_handle, target_token=None):
         if not self.snapshots:
             raise RuntimeError("target disappeared")
         return self.snapshots.pop(0)
 
-    def populate(self, window_handle, text):
+    def populate(self, window_handle, target_token, text):
         if self.fail_populate:
             raise RuntimeError("write failed")
         self.written = text
 
-    def submit(self, window_handle):
+    def submit(self, window_handle, target_token=None):
         if self.fail_submit:
             raise RuntimeError("submit failed")
         self.submits += 1
 
-    def read_rendered(self, window_handle, message_id):
+    def read_rendered(self, window_handle, target_token, message_id):
         return self.written if self.rendered else None
 
-    def wait_for_ack(self, window_handle, message_id, timeout_seconds):
+    def wait_for_ack(self, window_handle, target_token, message_id, timeout_seconds):
         import radar.workstation_relay as relay
         if self.ack == "valid":
             return relay.render_ack(self.envelope, status="RECEIVED_VERIFIED")
@@ -401,3 +401,70 @@ def test_canary_gate_rejects_command_like_or_unbounded_payloads():
                 source_bus_commit="d" * 40,
                 body=body,
             )
+
+
+def test_target_snapshot_binds_exact_tab_token_and_engine_uses_it():
+    import radar.workstation_relay as relay
+
+    descriptor = relay.TargetDescriptor(
+        recipient="TWO",
+        normalized_url_path="/c/exact-tab",
+        visible_identity="Two — Exact Chat",
+    )
+    snapshot = relay.TargetSnapshot(
+        window_handle=501,
+        target_token="firefox-tab-7",
+        normalized_url_path="/c/exact-tab",
+        visible_identity="Two — Exact Chat",
+    )
+    envelope = relay.RelayEnvelope.create(
+        sender="ONE",
+        recipient="TWO",
+        message_id="exact-tab-canary",
+        nonce="fedcba9876543210fedcba9876543210",
+        source_bus_message_id="bus-exact-tab",
+        source_bus_commit="e" * 40,
+        body="BT2_CANARY: exact tab binding",
+    )
+
+    class ExactTabTarget:
+        def __init__(self):
+            self.calls = []
+            self.written = None
+
+        def discover(self, expected):
+            return (snapshot,)
+
+        def activate(self, window_handle, target_token):
+            self.calls.append(("activate", window_handle, target_token))
+
+        def snapshot(self, window_handle, target_token):
+            self.calls.append(("snapshot", window_handle, target_token))
+            return snapshot
+
+        def populate(self, window_handle, target_token, text):
+            self.calls.append(("populate", window_handle, target_token))
+            self.written = text
+
+        def submit(self, window_handle, target_token):
+            self.calls.append(("submit", window_handle, target_token))
+
+        def read_rendered(self, window_handle, target_token, message_id):
+            return self.written
+
+        def wait_for_ack(
+            self, window_handle, target_token, message_id, timeout_seconds
+        ):
+            return relay.render_ack(envelope, status="RECEIVED_VERIFIED")
+
+    target = ExactTabTarget()
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+
+    assert receipt.final_state == "ACK_VERIFIED"
+    assert receipt.target_window_handle == 501
+    assert receipt.target_token == "firefox-tab-7"
+    assert ("activate", 501, "firefox-tab-7") in target.calls
+    assert ("submit", 501, "firefox-tab-7") in target.calls
