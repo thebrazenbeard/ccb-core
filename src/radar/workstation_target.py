@@ -29,8 +29,6 @@ class TargetDescriptor:
             raise TargetError("INVALID_TARGET_URL_PATH")
         if not self.visible_identity.strip():
             raise TargetError("INVALID_TARGET_VISIBLE_IDENTITY")
-        if self.target_token is not None and not self.target_token.strip():
-            raise TargetError("INVALID_TARGET_TOKEN")
 
 
 @dataclass(frozen=True)
@@ -47,6 +45,8 @@ class TargetSnapshot:
             raise TargetError("INVALID_TARGET_URL_PATH")
         if not self.visible_identity.strip():
             raise TargetError("INVALID_TARGET_VISIBLE_IDENTITY")
+        if self.target_token is not None and not self.target_token.strip():
+            raise TargetError("INVALID_TARGET_TOKEN")
 
     @property
     def selector_digest(self) -> str:
