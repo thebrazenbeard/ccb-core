@@ -16,13 +16,9 @@ ACK_PROTOCOL = "BT2_WORKSTATION_RELAY_ACK_V1"
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _NONCE_RE = re.compile(r"^[A-Fa-f0-9]{32,128}$")
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
-_CANARY_PREFIX = "BT2_CANARY:"
-_FORBIDDEN_CANARY_COMMAND = re.compile(
-    r"(?i)(?:^|\s)(?:sudo|rm|del|erase|format|powershell|pwsh|cmd(?:\.exe)?|"
-    r"bash|python|curl|wget|git|gh|invoke-[a-z]+|start-[a-z]+|stop-[a-z]+)"
-    r"(?:$|\s)"
+_CANARY_BODY_RE = re.compile(
+    r"^BT2_CANARY: marker=[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
 )
-_FORBIDDEN_SHELL_CHARS = frozenset(";&|><`$")
 
 
 class RelayError(ValueError):
@@ -39,14 +35,7 @@ def canonical_body(body: str) -> str:
 
 
 def _validate_canary(body: str) -> None:
-    if not body.startswith(_CANARY_PREFIX):
-        raise RelayError("CANARY_CONTENT_REJECTED")
-    if len(body.encode("utf-8")) > 512:
-        raise RelayError("CANARY_CONTENT_REJECTED")
-    if any(character in _FORBIDDEN_SHELL_CHARS for character in body):
-        raise RelayError("CANARY_CONTENT_REJECTED")
-    payload = body[len(_CANARY_PREFIX):]
-    if _FORBIDDEN_CANARY_COMMAND.search(payload):
+    if _CANARY_BODY_RE.fullmatch(body) is None:
         raise RelayError("CANARY_CONTENT_REJECTED")
 
 
