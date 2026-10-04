@@ -84,6 +84,28 @@ class WindowsFirefoxTarget:
                     matches.append(snapshot)
         return tuple(matches)
 
+    def snapshot(
+        self,
+        window_handle: int,
+        target_token: str | None,
+    ) -> TargetSnapshot:
+        if target_token is None or not target_token.strip():
+            raise FirefoxTargetError("TARGET_TOKEN_REQUIRED")
+        self.driver.select_tab(window_handle, target_token)
+        normalized_path = normalize_chatgpt_path(
+            self.driver.read_address_value(window_handle)
+        )
+        visible_identity = self.driver.read_visible_identity(
+            window_handle,
+            target_token,
+        )
+        return TargetSnapshot(
+            window_handle=window_handle,
+            target_token=target_token,
+            normalized_url_path=normalized_path,
+            visible_identity=visible_identity,
+        )
+
 
 __all__ = [
     "ADAPTER",
