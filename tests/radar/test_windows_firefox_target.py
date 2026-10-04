@@ -420,3 +420,51 @@ def test_uia_driver_accepts_live_firefox_urlbar_combobox_control():
         settle_seconds=0,
     )
     assert driver.read_address_value(501) == "https://chatgpt.com/c/live-combobox"
+
+
+def test_normalize_chatgpt_path_accepts_live_schemeless_address_value():
+    import radar.windows_firefox_target as firefox
+
+    assert (
+        firefox.normalize_chatgpt_path(
+            "chatgpt.com/g/project/c/live-conversation"
+        )
+        == "/g/project/c/live-conversation"
+    )
+
+
+def test_uia_driver_uses_exact_urlbar_lookup_before_tree_walk():
+    import radar.windows_firefox_target as firefox
+
+    class Value:
+        Value = "chatgpt.com/c/fast"
+
+    class Urlbar:
+        ControlTypeName = "ComboBoxControl"
+        AutomationId = "urlbar-input"
+
+        def Exists(self, maxSearchSeconds, searchIntervalSeconds):
+            return True
+
+        def GetValuePattern(self):
+            return Value()
+
+    class FakeAuto:
+        @staticmethod
+        def ControlFromHandle(handle):
+            return object()
+
+        @staticmethod
+        def ComboBoxControl(**kwargs):
+            assert kwargs["AutomationId"] == "urlbar-input"
+            return Urlbar()
+
+        @staticmethod
+        def WalkControl(*args, **kwargs):
+            raise AssertionError("full tree walk should not run when exact urlbar exists")
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+    )
+    assert driver.read_address_value(501) == "chatgpt.com/c/fast"
