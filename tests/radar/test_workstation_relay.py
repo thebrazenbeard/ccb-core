@@ -468,3 +468,52 @@ def test_target_snapshot_binds_exact_tab_token_and_engine_uses_it():
     assert receipt.target_token == "firefox-tab-7"
     assert ("activate", 501, "firefox-tab-7") in target.calls
     assert ("submit", 501, "firefox-tab-7") in target.calls
+
+
+def test_receipt_preserves_selector_values_rendered_digest_and_observed_ack():
+    import hashlib
+    import radar.workstation_relay as relay
+
+    envelope = relay.RelayEnvelope.create(
+        sender="ONE",
+        recipient="TWO",
+        message_id="evidence-canary-001",
+        nonce="00112233445566778899aabbccddeeff",
+        source_bus_message_id="bus-evidence-001",
+        source_bus_commit="f" * 40,
+        body="BT2_CANARY: evidence receipt",
+    )
+    descriptor = relay.TargetDescriptor(
+        recipient="TWO",
+        normalized_url_path="/c/evidence",
+        visible_identity="Two — Evidence Chat",
+    )
+    snapshot = relay.TargetSnapshot(
+        window_handle=711,
+        target_token="tab-evidence",
+        normalized_url_path="/c/evidence",
+        visible_identity="Two — Evidence Chat",
+    )
+    target = ScriptedTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+    )
+
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=2)
+
+    expected_ack = relay.render_ack(envelope, status="RECEIVED_VERIFIED")
+    assert receipt.final_state == "ACK_VERIFIED"
+    assert receipt.prewrite_normalized_url_path == "/c/evidence"
+    assert receipt.prewrite_visible_identity == "Two — Evidence Chat"
+    assert receipt.presubmit_normalized_url_path == "/c/evidence"
+    assert receipt.presubmit_visible_identity == "Two — Evidence Chat"
+    assert receipt.rendered_message_sha256 == hashlib.sha256(
+        target.written.encode("utf-8")
+    ).hexdigest()
+    assert receipt.ack_body == expected_ack
+    assert receipt.ack_sha256 == hashlib.sha256(
+        expected_ack.encode("utf-8")
+    ).hexdigest()
