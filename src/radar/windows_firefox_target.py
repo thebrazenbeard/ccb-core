@@ -7,6 +7,8 @@ driver is loaded separately so discovery logic can be qualified deterministicall
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 import sys
 import time
 from typing import Protocol
@@ -363,6 +365,47 @@ class UiautomationFirefoxDriver:
             time.sleep(min(self.ack_poll_seconds, remaining))
 
 
+def load_target_descriptor(
+    path: str | Path,
+    recipient: str,
+) -> TargetDescriptor:
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FirefoxTargetError("TARGET_CONFIG_UNREADABLE") from exc
+    if not isinstance(raw, dict) or raw.get("version") != 1:
+        raise FirefoxTargetError("TARGET_CONFIG_VERSION_UNSUPPORTED")
+    targets = raw.get("targets")
+    if not isinstance(targets, list):
+        raise FirefoxTargetError("TARGET_CONFIG_INVALID")
+
+    matches = []
+    for item in targets:
+        if not isinstance(item, dict):
+            raise FirefoxTargetError("TARGET_CONFIG_INVALID")
+        if item.get("recipient") != recipient:
+            continue
+        conversation_url = item.get("conversation_url")
+        visible_identity = item.get("visible_identity")
+        if not isinstance(conversation_url, str):
+            raise FirefoxTargetError("TARGET_CONFIG_INVALID")
+        if not isinstance(visible_identity, str) or not visible_identity.strip():
+            raise FirefoxTargetError("TARGET_CONFIG_INVALID")
+        matches.append(
+            TargetDescriptor(
+                recipient=recipient,
+                normalized_url_path=normalize_chatgpt_path(conversation_url),
+                visible_identity=visible_identity.strip(),
+            )
+        )
+
+    if not matches:
+        raise FirefoxTargetError("TARGET_CONFIG_NOT_FOUND")
+    if len(matches) != 1:
+        raise FirefoxTargetError("TARGET_CONFIG_AMBIGUOUS")
+    return matches[0]
+
+
 class WindowsFirefoxTarget:
     def __init__(self, *, driver: FirefoxUiDriver) -> None:
         self.driver = driver
@@ -476,5 +519,6 @@ __all__ = [
     "FirefoxUiDriver",
     "UiautomationFirefoxDriver",
     "WindowsFirefoxTarget",
+    "load_target_descriptor",
     "normalize_chatgpt_path",
 ]
