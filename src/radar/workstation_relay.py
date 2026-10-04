@@ -199,6 +199,7 @@ class WorkstationRelay:
         transitions = ["CREATED"]
         times = {"CREATED": _now_iso()}
         handle = None
+        target_token = None
         pre_digest = None
         presubmit_digest = None
         rendered_verified = False
@@ -226,6 +227,7 @@ class WorkstationRelay:
                 body_sha256=envelope.body_sha256, final_state=final_state,
                 transitions=tuple(transitions), transition_times=dict(times),
                 target_window_handle=handle,
+                target_token=target_token,
                 prewrite_selector_digest=pre_digest,
                 presubmit_selector_digest=presubmit_digest,
                 rendered_message_verified=rendered_verified,
@@ -253,11 +255,12 @@ class WorkstationRelay:
             return finish("TARGET_AMBIGUOUS")
         selected = candidates[0]
         handle = selected.window_handle
+        target_token = selected.target_token
         advance("TARGET_DISCOVERED")
 
-        target.activate(handle)
+        target.activate(handle, target_token)
         try:
-            prewrite = target.snapshot(handle)
+            prewrite = target.snapshot(handle, target_token)
         except Exception:
             return finish("TARGET_CHANGED_PRE_SUBMIT")
         if prewrite.window_handle != handle or not prewrite.matches(descriptor):
@@ -266,13 +269,13 @@ class WorkstationRelay:
         advance("TARGET_VERIFIED_PREWRITE")
 
         try:
-            target.populate(handle, _transport_text(envelope))
+            target.populate(handle, target_token, _transport_text(envelope))
         except Exception:
             return finish("COMPOSER_WRITE_FAILED")
         advance("COMPOSER_POPULATED")
 
         try:
-            presubmit = target.snapshot(handle)
+            presubmit = target.snapshot(handle, target_token)
         except Exception:
             return finish("TARGET_CHANGED_PRE_SUBMIT")
         presubmit_digest = presubmit.selector_digest
@@ -285,13 +288,15 @@ class WorkstationRelay:
         advance("TARGET_REVERIFIED_PRESUBMIT")
 
         try:
-            target.submit(handle)
+            target.submit(handle, target_token)
         except Exception:
             return finish("SUBMIT_NOT_ESTABLISHED")
         advance("SUBMITTED")
 
         try:
-            rendered = target.read_rendered(handle, envelope.message_id)
+            rendered = target.read_rendered(
+                handle, target_token, envelope.message_id
+            )
         except Exception:
             rendered = None
         if not _rendered_matches(envelope, rendered):
@@ -302,7 +307,7 @@ class WorkstationRelay:
 
         try:
             ack = target.wait_for_ack(
-                handle, envelope.message_id, ack_timeout_seconds
+                handle, target_token, envelope.message_id, ack_timeout_seconds
             )
         except Exception:
             ack = None
