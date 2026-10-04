@@ -27,9 +27,15 @@ class RelayReceipt:
     transition_times: dict[str, str]
     target_window_handle: int | None
     target_token: str | None
+    prewrite_normalized_url_path: str | None
+    prewrite_visible_identity: str | None
     prewrite_selector_digest: str | None
+    presubmit_normalized_url_path: str | None
+    presubmit_visible_identity: str | None
     presubmit_selector_digest: str | None
     rendered_message_verified: bool
+    rendered_message_sha256: str | None
+    ack_body: str | None
     ack_status: str | None
     ack_sha256: str | None
     side_effect_beyond_visible_text: bool = False
@@ -67,9 +73,29 @@ class RelayReceipt:
                 if value.get("target_token") is not None
                 else None
             ),
+            prewrite_normalized_url_path=(
+                str(value["prewrite_normalized_url_path"])
+                if value.get("prewrite_normalized_url_path") is not None
+                else None
+            ),
+            prewrite_visible_identity=(
+                str(value["prewrite_visible_identity"])
+                if value.get("prewrite_visible_identity") is not None
+                else None
+            ),
             prewrite_selector_digest=(
                 str(value["prewrite_selector_digest"])
                 if value.get("prewrite_selector_digest") is not None
+                else None
+            ),
+            presubmit_normalized_url_path=(
+                str(value["presubmit_normalized_url_path"])
+                if value.get("presubmit_normalized_url_path") is not None
+                else None
+            ),
+            presubmit_visible_identity=(
+                str(value["presubmit_visible_identity"])
+                if value.get("presubmit_visible_identity") is not None
                 else None
             ),
             presubmit_selector_digest=(
@@ -78,6 +104,14 @@ class RelayReceipt:
                 else None
             ),
             rendered_message_verified=bool(value["rendered_message_verified"]),
+            rendered_message_sha256=(
+                str(value["rendered_message_sha256"])
+                if value.get("rendered_message_sha256") is not None
+                else None
+            ),
+            ack_body=(
+                str(value["ack_body"]) if value.get("ack_body") is not None else None
+            ),
             ack_status=(
                 str(value["ack_status"]) if value.get("ack_status") is not None else None
             ),
