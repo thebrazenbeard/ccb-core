@@ -78,6 +78,31 @@ def _is_windows() -> bool:
     return sys.platform == "win32"
 
 
+def _win32_firefox_window_handles() -> tuple[int, ...]:
+    if not _is_windows():
+        return ()
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    handles: list[int] = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        class_name = ctypes.create_unicode_buffer(256)
+        if user32.GetClassNameW(hwnd, class_name, 256) <= 0:
+            return True
+        if class_name.value == "MozillaWindowClass":
+            handles.append(int(hwnd))
+        return True
+
+    if not user32.EnumWindows(visit, 0):
+        raise FirefoxTargetError("FIREFOX_WINDOW_ENUMERATION_FAILED")
+    return tuple(dict.fromkeys(handles))
+
+
 class UiautomationFirefoxDriver:
     """Concrete Windows UI Automation driver for Firefox.
 
@@ -89,6 +114,7 @@ class UiautomationFirefoxDriver:
         self,
         *,
         auto_module=None,
+        window_enumerator=None,
         settle_seconds: float = 0.15,
         ack_poll_seconds: float = 0.25,
         max_depth: int = 18,
@@ -97,6 +123,7 @@ class UiautomationFirefoxDriver:
             "Message GPT",
         ),
     ) -> None:
+        auto_module_injected = auto_module is not None
         if auto_module is None:
             if not _is_windows():
                 raise FirefoxTargetError("WINDOWS_REQUIRED")
@@ -109,6 +136,9 @@ class UiautomationFirefoxDriver:
         if settle_seconds < 0 or ack_poll_seconds <= 0 or max_depth < 1:
             raise FirefoxTargetError("INVALID_UIA_DRIVER_CONFIGURATION")
         self.auto = auto_module
+        if window_enumerator is None and not auto_module_injected and _is_windows():
+            window_enumerator = _win32_firefox_window_handles
+        self.window_enumerator = window_enumerator
         self.settle_seconds = settle_seconds
         self.ack_poll_seconds = ack_poll_seconds
         self.max_depth = max_depth
@@ -194,6 +224,14 @@ class UiautomationFirefoxDriver:
         return False
 
     def enumerate_firefox_windows(self) -> tuple[int, ...]:
+        if self.window_enumerator is not None:
+            handles = tuple(
+                int(handle)
+                for handle in self.window_enumerator()
+                if int(handle) > 0
+            )
+            return tuple(dict.fromkeys(handles))
+
         root = self.auto.GetRootControl()
         handles: list[int] = []
         for control in root.GetChildren():
