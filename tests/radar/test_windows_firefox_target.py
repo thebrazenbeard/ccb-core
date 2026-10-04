@@ -390,3 +390,33 @@ def test_post_submit_readback_reselects_bound_tab_before_observation():
     driver.enumerate_tabs(501)
     driver.read_rendered_message(501, "uia:9,8,7", "msg-1")
     assert tab.selection.selected == 1
+
+
+def test_uia_driver_accepts_live_firefox_urlbar_combobox_control():
+    import radar.windows_firefox_target as firefox
+
+    class Value:
+        def __init__(self, value):
+            self.Value = value
+
+    class Control:
+        ControlTypeName = "ComboBoxControl"
+        AutomationId = "urlbar-input"
+
+        def GetValuePattern(self):
+            return Value("https://chatgpt.com/c/live-combobox")
+
+    class FakeAuto:
+        @staticmethod
+        def ControlFromHandle(handle):
+            return object()
+
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            return iter(((Control(), 2),))
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+    )
+    assert driver.read_address_value(501) == "https://chatgpt.com/c/live-combobox"
