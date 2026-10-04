@@ -56,7 +56,15 @@ class FirefoxUiDriver(Protocol):
 def normalize_chatgpt_path(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise FirefoxTargetError("ADDRESS_VALUE_REQUIRED")
-    parsed = urlsplit(value.strip())
+    raw = value.strip()
+    if "://" not in raw:
+        lowered = raw.lower()
+        if any(
+            lowered == host or lowered.startswith(host + "/")
+            for host in _ALLOWED_CHATGPT_HOSTS
+        ):
+            raw = "https://" + raw
+    parsed = urlsplit(raw)
     host = (parsed.hostname or "").lower()
     if parsed.scheme.lower() != "https" or host not in _ALLOWED_CHATGPT_HOSTS:
         raise FirefoxTargetError("UNSUPPORTED_CHATGPT_ADDRESS")
@@ -245,6 +253,21 @@ class UiautomationFirefoxDriver:
             time.sleep(self.settle_seconds)
 
     def read_address_value(self, window_handle: int) -> str:
+        window = self._window(window_handle)
+        try:
+            exact = self.auto.ComboBoxControl(
+                searchFromControl=window,
+                searchDepth=self.max_depth,
+                AutomationId="urlbar-input",
+            )
+            if exact.Exists(0.5, 0.05):
+                value = self._value(exact)
+                if value is not None:
+                    normalize_chatgpt_path(value)
+                    return value
+        except Exception:
+            pass
+
         urlbar_matches: list[str] = []
         fallback_matches: list[str] = []
         for control, _depth in self._walk(window_handle):
