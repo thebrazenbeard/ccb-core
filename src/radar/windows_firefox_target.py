@@ -249,7 +249,10 @@ class UiautomationFirefoxDriver:
         fallback_matches: list[str] = []
         for control, _depth in self._walk(window_handle):
             try:
-                if control.ControlTypeName != "EditControl":
+                if control.ControlTypeName not in {
+                    "EditControl",
+                    "ComboBoxControl",
+                }:
                     continue
                 automation_id = str(
                     getattr(control, "AutomationId", "") or ""
