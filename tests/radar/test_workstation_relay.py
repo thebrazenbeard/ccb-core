@@ -21,9 +21,10 @@ def test_relay_envelope_canonicalizes_body_and_renders_exact_bus_binding():
         nonce="0123456789abcdef0123456789abcdef",
         source_bus_message_id="bus-message-001",
         source_bus_commit="a" * 40,
-        body="BT2_CANARY: hello\r\nworld",
+        body="BT2_CANARY: marker=hello-world",
     )
-    expected_body = "BT2_CANARY: hello\nworld"
+    assert relay.canonical_body("alpha\r\nbeta") == "alpha\nbeta"
+    expected_body = "BT2_CANARY: marker=hello-world"
     assert envelope.body == expected_body
     assert envelope.body_sha256 == hashlib.sha256(
         expected_body.encode("utf-8")
@@ -57,7 +58,7 @@ def test_verified_canary_follows_full_visible_text_state_machine():
         nonce="abcdef0123456789abcdef0123456789",
         source_bus_message_id="bus-message-002",
         source_bus_commit="b" * 40,
-        body="BT2_CANARY: relay semantics",
+        body="BT2_CANARY: marker=relay-semantics",
     )
     descriptor = relay.TargetDescriptor(
         recipient="TWO",
@@ -218,7 +219,7 @@ def relay_fixture(message_id="one-two-edge-001"):
         nonce="1234567890abcdef1234567890abcdef",
         source_bus_message_id="bus-edge-001",
         source_bus_commit="c" * 40,
-        body="BT2_CANARY: inert edge probe",
+        body="BT2_CANARY: marker=inert-edge-probe",
     )
     descriptor = relay.TargetDescriptor(
         recipient="TWO",
@@ -426,7 +427,7 @@ def test_target_snapshot_binds_exact_tab_token_and_engine_uses_it():
         nonce="fedcba9876543210fedcba9876543210",
         source_bus_message_id="bus-exact-tab",
         source_bus_commit="e" * 40,
-        body="BT2_CANARY: exact tab binding",
+        body="BT2_CANARY: marker=exact-tab-binding",
     )
 
     class ExactTabTarget:
@@ -483,7 +484,7 @@ def test_receipt_preserves_selector_values_rendered_digest_and_observed_ack():
         nonce="00112233445566778899aabbccddeeff",
         source_bus_message_id="bus-evidence-001",
         source_bus_commit="f" * 40,
-        body="BT2_CANARY: evidence receipt",
+        body="BT2_CANARY: marker=evidence-receipt",
     )
     descriptor = relay.TargetDescriptor(
         recipient="TWO",
@@ -548,3 +549,28 @@ def test_relay_contract_schema_requires_full_evidence_surface():
         "ack_body", "ack_status", "ack_sha256",
         "side_effect_beyond_visible_text",
     }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "BT2_CANARY: echo hello",
+        "BT2_CANARY: please delete file",
+        "BT2_CANARY: marker=abc extra",
+        "BT2_CANARY: marker=",
+        "BT2_CANARY: marker=abc\nsecond-line",
+    ],
+)
+def test_canary_admission_is_structured_marker_not_command_denylist(body):
+    import radar.workstation_relay as relay
+
+    with pytest.raises(relay.RelayError, match="CANARY_CONTENT_REJECTED"):
+        relay.RelayEnvelope.create(
+            sender="ONE",
+            recipient="TWO",
+            message_id="strict-canary",
+            nonce="abcdefabcdefabcdefabcdefabcdefab",
+            source_bus_message_id="bus-strict-canary",
+            source_bus_commit="1" * 40,
+            body=body,
+        )
