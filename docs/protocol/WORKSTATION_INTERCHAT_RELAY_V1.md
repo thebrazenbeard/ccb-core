@@ -69,6 +69,8 @@ If the visible rendered message cannot then be proven, the operation becomes `SU
 
 A later retry requires reconciliation that separately proves the original message is absent. V1 does not implement an automatic replay path after `SUBMITTED`.
 
+External source-verifier, discovery, and activation failures are converted into fail-closed terminal receipts rather than escaping and silently stranding an operation. Terminal state and its receipt are written in one SQLite transaction; the store does not first persist a terminal label without its evidence receipt.
+
 ## Recipient verification
 
 Every relay text instructs the receiving chat to verify the referenced canonical Bus message and commit before acting.
@@ -96,9 +98,11 @@ A receipt is evidence of the sender-side observation. It is not proof that the r
 
 ## Canary admission
 
-Current source accepts only bodies beginning with `BT2_CANARY:`.
+Current source accepts only a single-line structured marker:
 
-The canary gate rejects oversized text, shell metacharacters, common command interpreters/tools, and command-like payloads. This is a deliberately narrow qualification grammar, not a general semantic safety classifier.
+`BT2_CANARY: marker=<1-128 characters from A-Z, a-z, 0-9, dot, underscore, colon, or hyphen>`
+
+Free-form prose, newlines, shell text, code, commands, and arbitrary instructions are not valid canaries. The qualification grammar is intentionally data-only rather than a command denylist.
 
 Informational/work-bearing content is a future promotion, not current authority.
 
@@ -108,7 +112,7 @@ The transport-neutral target contract lives in `src/radar/workstation_target.py`
 
 The Windows/Firefox adapter lives in `src/radar/windows_firefox_target.py`.
 
-The intended concrete mechanism is Microsoft UI Automation through the optional `uiautomation` Python package. The dependency is optional so non-Windows CCB installs do not acquire Windows-only runtime requirements.
+The concrete mechanism is Microsoft UI Automation through optional pinned dependency `uiautomation==2.0.29`. The dependency is optional so non-Windows CCB installs do not acquire Windows-only runtime requirements. Hosted Windows CI installs the dependency, imports the UIA backend, and runs the focused relay suite.
 
 Live qualification must prove the actual Firefox/ChatGPT accessibility tree on the authorized workstation. Source tests and hosted Windows CI do not prove a real local browser session.
 
