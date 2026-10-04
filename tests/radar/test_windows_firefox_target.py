@@ -492,3 +492,19 @@ def test_uia_tab_discovery_bounds_browser_chrome_walk_depth():
     )
     assert driver.enumerate_tabs(501) == ()
     assert observed == [6]
+
+
+def test_uia_driver_uses_injected_native_window_enumerator_without_uia_root():
+    import radar.windows_firefox_target as firefox
+
+    class FakeAuto:
+        @staticmethod
+        def GetRootControl():
+            raise AssertionError("desktop UIA root must not be consulted")
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        window_enumerator=lambda: (501, 502, 501),
+        settle_seconds=0,
+    )
+    assert driver.enumerate_firefox_windows() == (501, 502)
