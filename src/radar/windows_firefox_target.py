@@ -123,12 +123,18 @@ class UiautomationFirefoxDriver:
             raise FirefoxTargetError("FIREFOX_WINDOW_NOT_FOUND")
         return control
 
-    def _walk(self, window_handle: int):
+    def _walk(
+        self,
+        window_handle: int,
+        *,
+        max_depth: int | None = None,
+    ):
         window = self._window(window_handle)
+        depth = self.max_depth if max_depth is None else max_depth
         return self.auto.WalkControl(
             window,
             includeTop=False,
-            maxDepth=self.max_depth,
+            maxDepth=depth,
         )
 
     @staticmethod
@@ -205,7 +211,10 @@ class UiautomationFirefoxDriver:
             if key[0] == window_handle:
                 del self._tabs[key]
         tabs: list[FirefoxTabRef] = []
-        for control, _depth in self._walk(window_handle):
+        for control, _depth in self._walk(
+            window_handle,
+            max_depth=min(6, self.max_depth),
+        ):
             try:
                 if control.ControlTypeName != "TabItemControl":
                     continue
