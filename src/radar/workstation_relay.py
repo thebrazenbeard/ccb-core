@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import re
+import time
 from typing import Callable
 
 from .workstation_relay_state import RelayReceipt, RelayStateError, RelayStore
@@ -168,11 +169,17 @@ class WorkstationRelay:
         self, envelope: RelayEnvelope, *,
         descriptor: TargetDescriptor, target: WorkstationTarget,
         ack_timeout_seconds: float,
+        rendered_readback_timeout_seconds: float = 15.0,
+        rendered_poll_seconds: float = 0.25,
     ) -> RelayReceipt:
         if descriptor.recipient != envelope.recipient:
             raise RelayError("TARGET_RECIPIENT_MISMATCH")
         if ack_timeout_seconds <= 0:
             raise RelayError("INVALID_ACK_TIMEOUT")
+        if rendered_readback_timeout_seconds <= 0:
+            raise RelayError("INVALID_RENDERED_READBACK_TIMEOUT")
+        if rendered_poll_seconds <= 0:
+            raise RelayError("INVALID_RENDERED_POLL_INTERVAL")
 
         created, state, old_receipt = self.store.claim(
             message_id=envelope.message_id,
@@ -309,16 +316,27 @@ class WorkstationRelay:
             return finish("SUBMIT_NOT_ESTABLISHED")
         advance("SUBMITTED")
 
-        try:
-            rendered = target.read_rendered(
-                handle, target_token, envelope.message_id
-            )
-        except Exception:
-            rendered = None
-        if isinstance(rendered, str):
-            rendered_sha256 = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
-        if not _rendered_matches(envelope, rendered):
-            return finish("SUBMITTED_UNVERIFIED")
+        rendered = None
+        rendered_deadline = (
+            time.monotonic() + rendered_readback_timeout_seconds
+        )
+        while True:
+            try:
+                rendered = target.read_rendered(
+                    handle, target_token, envelope.message_id
+                )
+            except Exception:
+                rendered = None
+            if isinstance(rendered, str):
+                rendered_sha256 = hashlib.sha256(
+                    rendered.encode("utf-8")
+                ).hexdigest()
+            if _rendered_matches(envelope, rendered):
+                break
+            remaining = rendered_deadline - time.monotonic()
+            if remaining <= 0:
+                return finish("SUBMITTED_UNVERIFIED")
+            time.sleep(min(rendered_poll_seconds, remaining))
         rendered_verified = True
         advance("RENDERED_READBACK_VERIFIED")
         advance("ACK_PENDING")
