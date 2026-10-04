@@ -84,3 +84,51 @@ def test_snapshot_reselects_exact_tab_and_rereads_both_selectors():
     assert observed.normalized_url_path == "/c/target-two"
     assert observed.visible_identity == "Two — Build Team Two"
     assert driver.selected == [(77, "tab-exact")]
+
+
+def test_adapter_operations_keep_exact_tab_token_through_visible_text_io():
+    import radar.windows_firefox_target as firefox
+
+    class FakeDriver:
+        def __init__(self):
+            self.calls = []
+
+        def select_tab(self, window_handle, target_token):
+            self.calls.append(("select", window_handle, target_token))
+
+        def write_composer(self, window_handle, target_token, text):
+            self.calls.append(("write", window_handle, target_token, text))
+
+        def submit_composer(self, window_handle, target_token):
+            self.calls.append(("submit", window_handle, target_token))
+
+        def read_rendered_message(self, window_handle, target_token, message_id):
+            self.calls.append(("read", window_handle, target_token, message_id))
+            return "rendered:" + message_id
+
+        def wait_for_ack(
+            self, window_handle, target_token, message_id, timeout_seconds
+        ):
+            self.calls.append(
+                ("ack", window_handle, target_token, message_id, timeout_seconds)
+            )
+            return "ack-body"
+
+    driver = FakeDriver()
+    target = firefox.WindowsFirefoxTarget(driver=driver)
+
+    target.activate(88, "tab-88")
+    target.populate(88, "tab-88", "BT2_CANARY: hello")
+    target.submit(88, "tab-88")
+    rendered = target.read_rendered(88, "tab-88", "msg-88")
+    ack = target.wait_for_ack(88, "tab-88", "msg-88", 3.5)
+
+    assert rendered == "rendered:msg-88"
+    assert ack == "ack-body"
+    assert driver.calls == [
+        ("select", 88, "tab-88"),
+        ("write", 88, "tab-88", "BT2_CANARY: hello"),
+        ("submit", 88, "tab-88"),
+        ("read", 88, "tab-88", "msg-88"),
+        ("ack", 88, "tab-88", "msg-88", 3.5),
+    ]
