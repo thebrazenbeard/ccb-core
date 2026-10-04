@@ -119,6 +119,7 @@ class UiautomationFirefoxDriver:
         ack_poll_seconds: float = 0.25,
         max_depth: int = 18,
         composer_names: tuple[str, ...] = (
+            "Ask ChatGPT",
             "Message ChatGPT",
             "Message GPT",
         ),
@@ -349,21 +350,81 @@ class UiautomationFirefoxDriver:
             raise FirefoxTargetError("CHATGPT_ADDRESS_AMBIGUOUS")
         return unique[0]
 
+    def _active_document(
+        self,
+        window_handle: int,
+        target_token: str,
+    ):
+        tab = self._tab_control(window_handle, target_token)
+        expected_name = str(getattr(tab, "Name", "") or "").strip()
+        if not expected_name:
+            raise FirefoxTargetError("VISIBLE_IDENTITY_UNAVAILABLE")
+
+        matches = []
+        for control, _depth in self._walk(
+            window_handle,
+            max_depth=min(6, self.max_depth),
+        ):
+            try:
+                if control.ControlTypeName != "DocumentControl":
+                    continue
+                if bool(control.IsOffscreen):
+                    continue
+                name = str(control.Name or "").strip()
+            except Exception:
+                continue
+            if name == expected_name:
+                matches.append(control)
+        if not matches:
+            raise FirefoxTargetError("TARGET_DOCUMENT_NOT_ACTIVE")
+        if len(matches) != 1:
+            raise FirefoxTargetError("TARGET_DOCUMENT_AMBIGUOUS")
+        return matches[0]
+
     def read_visible_identity(
         self,
         window_handle: int,
         target_token: str,
     ) -> str:
-        control = self._tab_control(window_handle, target_token)
-        name = str(getattr(control, "Name", "") or "").strip()
+        document = self._active_document(window_handle, target_token)
+        name = str(getattr(document, "Name", "") or "").strip()
         if not name:
             raise FirefoxTargetError("VISIBLE_IDENTITY_UNAVAILABLE")
         return name
 
-    def _composer(self, window_handle: int):
-        matches = []
-        for control, _depth in self._walk(window_handle):
+    def _composer(self, window_handle: int, target_token: str):
+        document = self._active_document(window_handle, target_token)
+        roots = []
+        for control, _depth in self.auto.WalkControl(
+            document,
+            includeTop=False,
+            maxDepth=self.max_depth,
+        ):
             try:
+                class_name = str(
+                    getattr(control, "ClassName", "") or ""
+                )
+                offscreen = bool(control.IsOffscreen)
+            except Exception:
+                continue
+            if "ComposerLayoutRoot" in class_name and not offscreen:
+                roots.append(control)
+        if not roots:
+            raise FirefoxTargetError("COMPOSER_ROOT_NOT_FOUND")
+        if len(roots) != 1:
+            raise FirefoxTargetError("COMPOSER_ROOT_AMBIGUOUS")
+
+        matches = []
+        for control, _depth in self.auto.WalkControl(
+            roots[0],
+            includeTop=False,
+            maxDepth=min(8, self.max_depth),
+        ):
+            try:
+                if control.ControlTypeName != "EditControl":
+                    continue
+                if bool(control.IsOffscreen):
+                    continue
                 name = str(control.Name or "").strip().casefold()
             except Exception:
                 continue
@@ -382,21 +443,30 @@ class UiautomationFirefoxDriver:
         text: str,
     ) -> None:
         self._tab_control(window_handle, target_token)
-        composer = self._composer(window_handle)
+        composer = self._composer(window_handle, target_token)
         if not self._set_value(composer, text):
             raise FirefoxTargetError("COMPOSER_WRITE_FAILED")
 
     def submit_composer(self, window_handle: int, target_token: str) -> None:
         self._tab_control(window_handle, target_token)
-        composer = self._composer(window_handle)
+        composer = self._composer(window_handle, target_token)
         try:
             composer.SendKeys("{Enter}", interval=0, waitTime=0)
         except Exception as exc:
             raise FirefoxTargetError("SUBMIT_NOT_ESTABLISHED") from exc
 
-    def _accessible_texts(self, window_handle: int) -> tuple[str, ...]:
+    def _accessible_texts(
+        self,
+        window_handle: int,
+        target_token: str,
+    ) -> tuple[str, ...]:
+        document = self._active_document(window_handle, target_token)
         texts: list[str] = []
-        for control, _depth in self._walk(window_handle):
+        for control, _depth in self.auto.WalkControl(
+            document,
+            includeTop=True,
+            maxDepth=self.max_depth,
+        ):
             try:
                 name = str(control.Name or "").strip()
             except Exception:
@@ -415,7 +485,7 @@ class UiautomationFirefoxDriver:
         message_id: str,
     ) -> str | None:
         self.select_tab(window_handle, target_token)
-        for text in self._accessible_texts(window_handle):
+        for text in self._accessible_texts(window_handle, target_token):
             if (
                 "BT2_WORKSTATION_RELAY_V1" in text
                 and f"message_id: {message_id}" in text
@@ -435,7 +505,7 @@ class UiautomationFirefoxDriver:
         deadline = time.monotonic() + timeout_seconds
         while True:
             self.select_tab(window_handle, target_token)
-            for text in self._accessible_texts(window_handle):
+            for text in self._accessible_texts(window_handle, target_token):
                 if (
                     "BT2_WORKSTATION_RELAY_ACK_V1" in text
                     and f"message_id: {message_id}" in text
@@ -528,7 +598,6 @@ class WindowsFirefoxTarget:
     ) -> TargetSnapshot:
         if target_token is None or not target_token.strip():
             raise FirefoxTargetError("TARGET_TOKEN_REQUIRED")
-        self.driver.select_tab(window_handle, target_token)
         normalized_path = normalize_chatgpt_path(
             self.driver.read_address_value(window_handle)
         )

@@ -62,7 +62,7 @@ def test_discovery_selects_tabs_and_requires_both_exact_selectors():
     assert driver.selected == [(11, "tab-a"), (11, "tab-b"), (22, "tab-c")]
 
 
-def test_snapshot_reselects_exact_tab_and_rereads_both_selectors():
+def test_snapshot_reads_both_selectors_without_reselecting():
     import radar.windows_firefox_target as firefox
 
     class FakeDriver:
@@ -87,7 +87,7 @@ def test_snapshot_reselects_exact_tab_and_rereads_both_selectors():
     assert observed.target_token == "tab-exact"
     assert observed.normalized_url_path == "/c/target-two"
     assert observed.visible_identity == "Two — Build Team Two"
-    assert driver.selected == [(77, "tab-exact")]
+    assert driver.selected == []
 
 
 def test_adapter_operations_keep_exact_tab_token_through_visible_text_io():
@@ -196,6 +196,11 @@ def test_uiautomation_driver_enumerates_firefox_tabs_and_reads_chatgpt_address()
         name="Search with Google or enter address",
         value="https://chatgpt.com/c/target-two?ignored=1",
     )
+    active_document = Control(
+        control_type="DocumentControl",
+        name="Two — Build Team Two",
+    )
+    active_document.IsOffscreen = False
 
     class Root:
         def GetChildren(self):
@@ -214,7 +219,7 @@ def test_uiautomation_driver_enumerates_firefox_tabs_and_reads_chatgpt_address()
         @staticmethod
         def WalkControl(control, includeTop=False, maxDepth=0):
             assert control is firefox_window
-            return iter(((tab, 2), (address, 3)))
+            return iter(((tab, 2), (address, 3), (active_document, 4)))
 
     driver = firefox.UiautomationFirefoxDriver(
         auto_module=FakeAuto,
@@ -359,7 +364,7 @@ def test_post_submit_readback_reselects_bound_tab_before_observation():
             self.selected += 1
             return True
 
-    class Control:
+    class Tab:
         ControlTypeName = "TabItemControl"
         Name = "Two — Build Team Two"
 
@@ -372,16 +377,30 @@ def test_post_submit_readback_reselects_bound_tab_before_observation():
         def GetSelectionItemPattern(self):
             return self.selection
 
-    tab = Control()
+    class Document:
+        ControlTypeName = "DocumentControl"
+        Name = "Two — Build Team Two"
+        IsOffscreen = False
+
+        def GetValuePattern(self):
+            return None
+
+    window = object()
+    tab = Tab()
+    document = Document()
 
     class FakeAuto:
         @staticmethod
         def ControlFromHandle(handle):
-            return object()
+            return window
 
         @staticmethod
         def WalkControl(control, includeTop=False, maxDepth=0):
-            return iter(((tab, 2),))
+            if control is window:
+                return iter(((tab, 2), (document, 4)))
+            if control is document:
+                return iter(())
+            return iter(())
 
     driver = firefox.UiautomationFirefoxDriver(
         auto_module=FakeAuto,
@@ -508,3 +527,239 @@ def test_uia_driver_uses_injected_native_window_enumerator_without_uia_root():
         settle_seconds=0,
     )
     assert driver.enumerate_firefox_windows() == (501, 502)
+
+
+def test_snapshot_observes_current_state_without_reselecting_target():
+    import radar.windows_firefox_target as firefox
+
+    class FakeDriver:
+        def __init__(self):
+            self.selected = []
+
+        def select_tab(self, window_handle, target_token):
+            self.selected.append((window_handle, target_token))
+            raise AssertionError("presubmit snapshot must not reselect target")
+
+        def read_address_value(self, window_handle):
+            return "https://chatgpt.com/c/current-visible-tab"
+
+        def read_visible_identity(self, window_handle, target_token):
+            return "Current visible chat"
+
+    driver = FakeDriver()
+    target = firefox.WindowsFirefoxTarget(driver=driver)
+
+    observed = target.snapshot(77, "tab-bound")
+
+    assert driver.selected == []
+    assert observed.normalized_url_path == "/c/current-visible-tab"
+    assert observed.visible_identity == "Current visible chat"
+
+
+def test_uia_composer_is_scoped_to_exact_active_document_and_accepts_live_name():
+    import radar.windows_firefox_target as firefox
+
+    class Selection:
+        IsSelected = True
+
+        def Select(self, waitTime=0):
+            return True
+
+    class Value:
+        def __init__(self):
+            self.Value = ""
+            self.IsReadOnly = False
+
+        def SetValue(self, value, waitTime=0):
+            self.Value = value
+            return True
+
+    class Control:
+        def __init__(
+            self,
+            *,
+            control_type="",
+            name="",
+            class_name="",
+            offscreen=False,
+            runtime_id=None,
+            value_pattern=None,
+        ):
+            self.ControlTypeName = control_type
+            self.Name = name
+            self.ClassName = class_name
+            self.AutomationId = ""
+            self.IsOffscreen = offscreen
+            self._runtime_id = runtime_id or []
+            self._value_pattern = value_pattern
+            self.selection = Selection()
+
+        def GetRuntimeId(self):
+            return self._runtime_id
+
+        def GetSelectionItemPattern(self):
+            return self.selection
+
+        def GetValuePattern(self):
+            return self._value_pattern
+
+    window = Control(name="Firefox")
+    tab = Control(
+        control_type="TabItemControl",
+        name="Model Training Lane C",
+        runtime_id=[42, 1, 9],
+    )
+    active_doc = Control(
+        control_type="DocumentControl",
+        name="Model Training Lane C",
+        offscreen=False,
+    )
+    wrong_doc = Control(
+        control_type="DocumentControl",
+        name="Other Chat",
+        offscreen=True,
+    )
+    composer_root = Control(
+        control_type="GroupControl",
+        class_name="ComposerLayoutRoot-X",
+    )
+    real_value = Value()
+    real_composer = Control(
+        control_type="EditControl",
+        name="Ask ChatGPT",
+        class_name="ProseMirror ProseMirror-focused",
+        value_pattern=real_value,
+    )
+    decoy_value = Value()
+    decoy_composer = Control(
+        control_type="EditControl",
+        name="Message ChatGPT",
+        class_name="ProseMirror",
+        value_pattern=decoy_value,
+    )
+
+    class FakeAuto:
+        @staticmethod
+        def ControlFromHandle(handle):
+            return window
+
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            if control is window:
+                return iter(((tab, 2), (active_doc, 4), (wrong_doc, 4)))
+            if control is active_doc:
+                return iter(((composer_root, 8),))
+            if control is composer_root:
+                return iter(((real_composer, 5),))
+            if control is wrong_doc:
+                return iter(((decoy_composer, 5),))
+            return iter(())
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        window_enumerator=lambda: (501,),
+        settle_seconds=0,
+    )
+    driver.enumerate_tabs(501)
+    driver.write_composer(501, "uia:42,1,9", "BT2_CANARY: marker=live")
+
+    assert real_value.Value == "BT2_CANARY: marker=live"
+    assert decoy_value.Value == ""
+
+
+def test_rendered_readback_cannot_match_message_from_other_tab_document():
+    import radar.windows_firefox_target as firefox
+
+    class Selection:
+        IsSelected = True
+
+        def Select(self, waitTime=0):
+            return True
+
+    class Control:
+        def __init__(
+            self,
+            *,
+            control_type="",
+            name="",
+            offscreen=False,
+            runtime_id=None,
+        ):
+            self.ControlTypeName = control_type
+            self.Name = name
+            self.ClassName = ""
+            self.AutomationId = ""
+            self.IsOffscreen = offscreen
+            self._runtime_id = runtime_id or []
+            self.selection = Selection()
+
+        def GetRuntimeId(self):
+            return self._runtime_id
+
+        def GetSelectionItemPattern(self):
+            return self.selection
+
+        def GetValuePattern(self):
+            return None
+
+    window = Control(name="Firefox")
+    tab = Control(
+        control_type="TabItemControl",
+        name="Target Chat",
+        runtime_id=[42, 2, 9],
+    )
+    target_doc = Control(
+        control_type="DocumentControl",
+        name="Target Chat",
+        offscreen=False,
+    )
+    other_doc = Control(
+        control_type="DocumentControl",
+        name="Other Chat",
+        offscreen=True,
+    )
+    target_text = Control(
+        control_type="TextControl",
+        name="ordinary target text",
+    )
+    decoy_text = Control(
+        control_type="TextControl",
+        name=(
+            "BT2_WORKSTATION_RELAY_V1\n"
+            "message_id: msg-decoy\n"
+            "nonce: abc"
+        ),
+    )
+
+    class FakeAuto:
+        @staticmethod
+        def ControlFromHandle(handle):
+            return window
+
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            if control is window:
+                return iter((
+                    (tab, 2),
+                    (target_doc, 4),
+                    (other_doc, 4),
+                    (decoy_text, 16),
+                ))
+            if control is target_doc:
+                return iter(((target_text, 2),))
+            if control is other_doc:
+                return iter(((decoy_text, 2),))
+            return iter(())
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        window_enumerator=lambda: (501,),
+        settle_seconds=0,
+    )
+    driver.enumerate_tabs(501)
+
+    assert driver.read_rendered_message(
+        501,
+        "uia:42,2,9",
+        "msg-decoy",
+    ) is None
