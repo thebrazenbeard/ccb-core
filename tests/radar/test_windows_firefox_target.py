@@ -763,3 +763,37 @@ def test_rendered_readback_cannot_match_message_from_other_tab_document():
         "uia:42,2,9",
         "msg-decoy",
     ) is None
+
+
+def test_uia_set_value_falls_back_to_legacy_when_value_pattern_returns_false():
+    import radar.windows_firefox_target as firefox
+
+    calls = []
+
+    class ValuePattern:
+        IsReadOnly = False
+
+        def SetValue(self, text, waitTime=0):
+            calls.append(("value", text))
+            return False
+
+    class LegacyPattern:
+        def SetValue(self, text, waitTime=0):
+            calls.append(("legacy", text))
+            return True
+
+    class Control:
+        def GetValuePattern(self):
+            return ValuePattern()
+
+        def GetLegacyIAccessiblePattern(self):
+            return LegacyPattern()
+
+    assert firefox.UiautomationFirefoxDriver._set_value(
+        Control(),
+        "BT2_CANARY: marker=value-fallback",
+    ) is True
+    assert calls == [
+        ("value", "BT2_CANARY: marker=value-fallback"),
+        ("legacy", "BT2_CANARY: marker=value-fallback"),
+    ]
