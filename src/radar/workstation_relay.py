@@ -212,7 +212,8 @@ class WorkstationRelay:
 
         def finish(final_state: str) -> RelayReceipt:
             if transitions[-1] != final_state:
-                advance(final_state)
+                transitions.append(final_state)
+                times[final_state] = _now_iso()
             receipt = RelayReceipt(
                 protocol=PROTOCOL, sender=envelope.sender,
                 recipient=envelope.recipient, message_id=envelope.message_id,
@@ -242,14 +243,21 @@ class WorkstationRelay:
             )
             return receipt
 
-        if not self.source_bus_verifier(envelope):
+        try:
+            source_verified = bool(self.source_bus_verifier(envelope))
+        except Exception:
+            source_verified = False
+        if not source_verified:
             return finish("SOURCE_BUS_UNVERIFIED")
         advance("BUS_BOUND")
 
-        candidates = tuple(
-            item for item in target.discover(descriptor)
-            if item.matches(descriptor)
-        )
+        try:
+            candidates = tuple(
+                item for item in target.discover(descriptor)
+                if item.matches(descriptor)
+            )
+        except Exception:
+            return finish("TARGET_NOT_FOUND")
         if not candidates:
             return finish("TARGET_NOT_FOUND")
         if len(candidates) != 1:
@@ -259,7 +267,10 @@ class WorkstationRelay:
         target_token = selected.target_token
         advance("TARGET_DISCOVERED")
 
-        target.activate(handle, target_token)
+        try:
+            target.activate(handle, target_token)
+        except Exception:
+            return finish("TARGET_CHANGED_PRE_SUBMIT")
         try:
             prewrite = target.snapshot(handle, target_token)
         except Exception:
