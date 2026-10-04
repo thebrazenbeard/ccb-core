@@ -468,3 +468,27 @@ def test_uia_driver_uses_exact_urlbar_lookup_before_tree_walk():
         settle_seconds=0,
     )
     assert driver.read_address_value(501) == "chatgpt.com/c/fast"
+
+
+def test_uia_tab_discovery_bounds_browser_chrome_walk_depth():
+    import radar.windows_firefox_target as firefox
+
+    observed = []
+
+    class FakeAuto:
+        @staticmethod
+        def ControlFromHandle(handle):
+            return object()
+
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            observed.append(maxDepth)
+            return iter(())
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+        max_depth=18,
+    )
+    assert driver.enumerate_tabs(501) == ()
+    assert observed == [6]
