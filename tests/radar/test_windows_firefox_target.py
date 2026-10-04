@@ -241,3 +241,85 @@ def test_uiautomation_driver_requires_windows_when_backend_not_injected(monkeypa
     monkeypatch.setattr(firefox, "_is_windows", lambda: False)
     with pytest.raises(firefox.FirefoxTargetError, match="WINDOWS_REQUIRED"):
         firefox.UiautomationFirefoxDriver()
+
+
+def test_uia_driver_prefers_firefox_urlbar_over_page_edit_decoy():
+    import radar.windows_firefox_target as firefox
+
+    class Value:
+        def __init__(self, value):
+            self.Value = value
+
+    class Control:
+        def __init__(self, *, control_type="", automation_id="", value=None):
+            self.ControlTypeName = control_type
+            self.AutomationId = automation_id
+            self._value = value
+
+        def GetValuePattern(self):
+            return Value(self._value) if self._value is not None else None
+
+    urlbar = Control(
+        control_type="EditControl",
+        automation_id="urlbar-input",
+        value="https://chatgpt.com/c/right",
+    )
+    decoy = Control(
+        control_type="EditControl",
+        automation_id="prompt-textarea",
+        value="https://chatgpt.com/c/wrong",
+    )
+
+    class FakeAuto:
+        @staticmethod
+        def ControlFromHandle(handle):
+            return object()
+
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            return iter(((decoy, 4), (urlbar, 2)))
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+    )
+    assert driver.read_address_value(501) == "https://chatgpt.com/c/right"
+
+
+def test_post_submit_readback_reselects_bound_tab_before_observation():
+    import radar.windows_firefox_target as firefox
+
+    class Pattern:
+        def __init__(self):
+            self.selected = 0
+        def Select(self, waitTime=0):
+            self.selected += 1
+            return True
+
+    class Control:
+        ControlTypeName = "TabItemControl"
+        Name = "Two — Build Team Two"
+        def __init__(self):
+            self.selection = Pattern()
+        def GetRuntimeId(self):
+            return [9, 8, 7]
+        def GetSelectionItemPattern(self):
+            return self.selection
+
+    tab = Control()
+
+    class FakeAuto:
+        @staticmethod
+        def ControlFromHandle(handle):
+            return object()
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            return iter(((tab, 2),))
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+    )
+    driver.enumerate_tabs(501)
+    driver.read_rendered_message(501, "uia:9,8,7", "msg-1")
+    assert tab.selection.selected == 1
