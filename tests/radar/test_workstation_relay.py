@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import importlib.util
 
 import pytest
@@ -517,3 +519,32 @@ def test_receipt_preserves_selector_values_rendered_digest_and_observed_ack():
     assert receipt.ack_sha256 == hashlib.sha256(
         expected_ack.encode("utf-8")
     ).hexdigest()
+
+
+def test_relay_contract_schema_requires_full_evidence_surface():
+    root = Path(__file__).resolve().parents[2]
+    schema = json.loads(
+        (root / "architecture" / "contracts" /
+         "WORKSTATION_INTERCHAT_RELAY_V1.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert schema["$id"] == "WORKSTATION_INTERCHAT_RELAY_V1"
+    assert set(schema["$defs"]["envelope"]["required"]) >= {
+        "protocol", "sender", "recipient", "message_id", "nonce",
+        "source_bus_message_id", "source_bus_commit", "body_sha256",
+        "requires_ack", "content_class", "body",
+    }
+    assert set(schema["$defs"]["receipt"]["required"]) >= {
+        "protocol", "sender", "recipient", "message_id", "nonce",
+        "source_bus_message_id", "source_bus_commit", "body_sha256",
+        "final_state", "transitions", "transition_times",
+        "target_window_handle", "target_token",
+        "prewrite_normalized_url_path", "prewrite_visible_identity",
+        "prewrite_selector_digest",
+        "presubmit_normalized_url_path", "presubmit_visible_identity",
+        "presubmit_selector_digest",
+        "rendered_message_verified", "rendered_message_sha256",
+        "ack_body", "ack_status", "ack_sha256",
+        "side_effect_beyond_visible_text",
+    }
