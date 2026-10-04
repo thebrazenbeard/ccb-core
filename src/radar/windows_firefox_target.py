@@ -245,11 +245,15 @@ class UiautomationFirefoxDriver:
             time.sleep(self.settle_seconds)
 
     def read_address_value(self, window_handle: int) -> str:
-        matches: list[str] = []
+        urlbar_matches: list[str] = []
+        fallback_matches: list[str] = []
         for control, _depth in self._walk(window_handle):
             try:
                 if control.ControlTypeName != "EditControl":
                     continue
+                automation_id = str(
+                    getattr(control, "AutomationId", "") or ""
+                ).strip()
             except Exception:
                 continue
             value = self._value(control)
@@ -259,8 +263,13 @@ class UiautomationFirefoxDriver:
                 normalize_chatgpt_path(value)
             except FirefoxTargetError:
                 continue
-            matches.append(value)
-        unique = tuple(dict.fromkeys(matches))
+            if automation_id == "urlbar-input":
+                urlbar_matches.append(value)
+            else:
+                fallback_matches.append(value)
+
+        candidates = urlbar_matches if urlbar_matches else fallback_matches
+        unique = tuple(dict.fromkeys(candidates))
         if not unique:
             raise FirefoxTargetError("CHATGPT_ADDRESS_NOT_FOUND")
         if len(unique) != 1:
@@ -332,7 +341,7 @@ class UiautomationFirefoxDriver:
         target_token: str,
         message_id: str,
     ) -> str | None:
-        self._tab_control(window_handle, target_token)
+        self.select_tab(window_handle, target_token)
         for text in self._accessible_texts(window_handle):
             if (
                 "BT2_WORKSTATION_RELAY_V1" in text
@@ -350,9 +359,9 @@ class UiautomationFirefoxDriver:
     ) -> str | None:
         if timeout_seconds <= 0:
             raise FirefoxTargetError("INVALID_ACK_TIMEOUT")
-        self._tab_control(window_handle, target_token)
         deadline = time.monotonic() + timeout_seconds
         while True:
+            self.select_tab(window_handle, target_token)
             for text in self._accessible_texts(window_handle):
                 if (
                     "BT2_WORKSTATION_RELAY_ACK_V1" in text
