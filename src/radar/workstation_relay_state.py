@@ -26,6 +26,7 @@ class RelayReceipt:
     transitions: tuple[str, ...]
     transition_times: dict[str, str]
     target_window_handle: int | None
+    target_token: str | None
     prewrite_selector_digest: str | None
     presubmit_selector_digest: str | None
     rendered_message_verified: bool
@@ -59,6 +60,11 @@ class RelayReceipt:
             target_window_handle=(
                 int(value["target_window_handle"])
                 if value.get("target_window_handle") is not None
+                else None
+            ),
+            target_token=(
+                str(value["target_token"])
+                if value.get("target_token") is not None
                 else None
             ),
             prewrite_selector_digest=(
