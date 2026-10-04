@@ -200,9 +200,15 @@ class WorkstationRelay:
         times = {"CREATED": _now_iso()}
         handle = None
         target_token = None
+        pre_path = None
+        pre_identity = None
         pre_digest = None
+        presubmit_path = None
+        presubmit_identity = None
         presubmit_digest = None
         rendered_verified = False
+        rendered_sha256 = None
+        ack_body = None
         ack_status = None
         ack_sha256 = None
 
@@ -228,9 +234,15 @@ class WorkstationRelay:
                 transitions=tuple(transitions), transition_times=dict(times),
                 target_window_handle=handle,
                 target_token=target_token,
+                prewrite_normalized_url_path=pre_path,
+                prewrite_visible_identity=pre_identity,
                 prewrite_selector_digest=pre_digest,
+                presubmit_normalized_url_path=presubmit_path,
+                presubmit_visible_identity=presubmit_identity,
                 presubmit_selector_digest=presubmit_digest,
                 rendered_message_verified=rendered_verified,
+                rendered_message_sha256=rendered_sha256,
+                ack_body=ack_body,
                 ack_status=ack_status, ack_sha256=ack_sha256,
                 side_effect_beyond_visible_text=False,
             )
@@ -263,9 +275,11 @@ class WorkstationRelay:
             prewrite = target.snapshot(handle, target_token)
         except Exception:
             return finish("TARGET_CHANGED_PRE_SUBMIT")
+        pre_path = prewrite.normalized_url_path
+        pre_identity = prewrite.visible_identity
+        pre_digest = prewrite.selector_digest
         if prewrite.window_handle != handle or not prewrite.matches(descriptor):
             return finish("TARGET_CHANGED_PRE_SUBMIT")
-        pre_digest = prewrite.selector_digest
         advance("TARGET_VERIFIED_PREWRITE")
 
         try:
@@ -278,6 +292,8 @@ class WorkstationRelay:
             presubmit = target.snapshot(handle, target_token)
         except Exception:
             return finish("TARGET_CHANGED_PRE_SUBMIT")
+        presubmit_path = presubmit.normalized_url_path
+        presubmit_identity = presubmit.visible_identity
         presubmit_digest = presubmit.selector_digest
         if (
             presubmit.window_handle != handle
@@ -299,6 +315,8 @@ class WorkstationRelay:
             )
         except Exception:
             rendered = None
+        if isinstance(rendered, str):
+            rendered_sha256 = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
         if not _rendered_matches(envelope, rendered):
             return finish("SUBMITTED_UNVERIFIED")
         rendered_verified = True
@@ -311,13 +329,15 @@ class WorkstationRelay:
             )
         except Exception:
             ack = None
+        if isinstance(ack, str):
+            ack_body = ack
+            ack_sha256 = hashlib.sha256(ack.encode("utf-8")).hexdigest()
         parsed = _parse_ack(envelope, ack)
         if parsed is None:
             return finish("ACK_TIMEOUT")
+        ack_status = parsed
         if parsed == "MISMATCH":
             return finish("ACK_MISMATCH")
-        ack_status = parsed
-        ack_sha256 = hashlib.sha256(ack.encode("utf-8")).hexdigest()
         if parsed != "RECEIVED_VERIFIED":
             return finish("SOURCE_BUS_UNVERIFIED")
         return finish("ACK_VERIFIED")
