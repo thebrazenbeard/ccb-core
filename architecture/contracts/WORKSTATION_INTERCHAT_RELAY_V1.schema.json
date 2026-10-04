@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "WORKSTATION_INTERCHAT_RELAY_V1",
+  "title": "BT2 Workstation Inter-chat Relay V1",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/envelope" },
+    { "$ref": "#/$defs/receipt" }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sha40": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "nullableString": {
+      "type": ["string", "null"]
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "sender",
+        "recipient",
+        "message_id",
+        "nonce",
+        "source_bus_message_id",
+        "source_bus_commit",
+        "body_sha256",
+        "requires_ack",
+        "content_class",
+        "body"
+      ],
+      "properties": {
+        "protocol": { "const": "BT2_WORKSTATION_RELAY_V1" },
+        "sender": { "type": "string", "minLength": 1 },
+        "recipient": { "type": "string", "minLength": 1 },
+        "message_id": { "type": "string", "minLength": 1 },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[0-9A-Fa-f]{32,128}$"
+        },
+        "source_bus_message_id": { "type": "string", "minLength": 1 },
+        "source_bus_commit": { "$ref": "#/$defs/sha40" },
+        "body_sha256": { "$ref": "#/$defs/sha256" },
+        "requires_ack": { "const": true },
+        "content_class": {
+          "enum": ["CANARY", "INFORMATIONAL"]
+        },
+        "body": { "type": "string", "minLength": 1 }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "sender",
+        "recipient",
+        "message_id",
+        "nonce",
+        "source_bus_message_id",
+        "source_bus_commit",
+        "body_sha256",
+        "final_state",
+        "transitions",
+        "transition_times",
+        "target_window_handle",
+        "target_token",
+        "prewrite_normalized_url_path",
+        "prewrite_visible_identity",
+        "prewrite_selector_digest",
+        "presubmit_normalized_url_path",
+        "presubmit_visible_identity",
+        "presubmit_selector_digest",
+        "rendered_message_verified",
+        "rendered_message_sha256",
+        "ack_body",
+        "ack_status",
+        "ack_sha256",
+        "side_effect_beyond_visible_text"
+      ],
+      "properties": {
+        "protocol": { "const": "BT2_WORKSTATION_RELAY_V1" },
+        "sender": { "type": "string", "minLength": 1 },
+        "recipient": { "type": "string", "minLength": 1 },
+        "message_id": { "type": "string", "minLength": 1 },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[0-9A-Fa-f]{32,128}$"
+        },
+        "source_bus_message_id": { "type": "string", "minLength": 1 },
+        "source_bus_commit": { "$ref": "#/$defs/sha40" },
+        "body_sha256": { "$ref": "#/$defs/sha256" },
+        "final_state": {
+          "enum": [
+            "ACK_VERIFIED",
+            "TARGET_NOT_FOUND",
+            "TARGET_AMBIGUOUS",
+            "TARGET_CHANGED_PRE_SUBMIT",
+            "COMPOSER_WRITE_FAILED",
+            "SUBMIT_NOT_ESTABLISHED",
+            "SUBMITTED_UNVERIFIED",
+            "ACK_TIMEOUT",
+            "ACK_MISMATCH",
+            "SOURCE_BUS_UNVERIFIED"
+          ]
+        },
+        "transitions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 2
+        },
+        "transition_times": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "target_window_handle": { "type": ["integer", "null"], "minimum": 1 },
+        "target_token": { "$ref": "#/$defs/nullableString" },
+        "prewrite_normalized_url_path": { "$ref": "#/$defs/nullableString" },
+        "prewrite_visible_identity": { "$ref": "#/$defs/nullableString" },
+        "prewrite_selector_digest": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "presubmit_normalized_url_path": { "$ref": "#/$defs/nullableString" },
+        "presubmit_visible_identity": { "$ref": "#/$defs/nullableString" },
+        "presubmit_selector_digest": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "rendered_message_verified": { "type": "boolean" },
+        "rendered_message_sha256": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "ack_body": { "$ref": "#/$defs/nullableString" },
+        "ack_status": {
+          "type": ["string", "null"],
+          "enum": [
+            "RECEIVED_VERIFIED",
+            "HOLD_SOURCE_UNVERIFIED",
+            "MISMATCH",
+            null
+          ]
+        },
+        "ack_sha256": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "side_effect_beyond_visible_text": { "const": false }
+      }
+    }
+  }
+}
