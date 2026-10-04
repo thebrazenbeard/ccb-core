@@ -1,5 +1,7 @@
 import importlib.util
 
+import pytest
+
 
 def test_windows_firefox_target_module_is_shipped():
     assert importlib.util.find_spec("radar.windows_firefox_target") is not None
@@ -132,3 +134,110 @@ def test_adapter_operations_keep_exact_tab_token_through_visible_text_io():
         ("read", 88, "tab-88", "msg-88"),
         ("ack", 88, "tab-88", "msg-88", 3.5),
     ]
+
+
+def test_uiautomation_driver_enumerates_firefox_tabs_and_reads_chatgpt_address():
+    import radar.windows_firefox_target as firefox
+
+    class Pattern:
+        def __init__(self):
+            self.selected = False
+
+        def Select(self, waitTime=0):
+            self.selected = True
+            return True
+
+    class Value:
+        def __init__(self, value):
+            self.Value = value
+            self.IsReadOnly = False
+
+        def SetValue(self, value, waitTime=0):
+            self.Value = value
+            return True
+
+    class Control:
+        def __init__(
+            self, *, class_name="", handle=0, control_type="", name="",
+            runtime_id=None, value=None,
+        ):
+            self.ClassName = class_name
+            self.NativeWindowHandle = handle
+            self.ControlTypeName = control_type
+            self.Name = name
+            self._runtime_id = runtime_id or []
+            self._value = value
+            self.selection = Pattern()
+
+        def GetRuntimeId(self):
+            return self._runtime_id
+
+        def GetSelectionItemPattern(self):
+            return self.selection
+
+        def GetValuePattern(self):
+            return Value(self._value) if self._value is not None else None
+
+    firefox_window = Control(
+        class_name="MozillaWindowClass",
+        handle=501,
+        name="Firefox",
+    )
+    other_window = Control(class_name="OtherClass", handle=777, name="Other")
+    tab = Control(
+        control_type="TabItemControl",
+        name="Two — Build Team Two",
+        runtime_id=[42, 7, 9],
+    )
+    address = Control(
+        control_type="EditControl",
+        name="Search with Google or enter address",
+        value="https://chatgpt.com/c/target-two?ignored=1",
+    )
+
+    class Root:
+        def GetChildren(self):
+            return [firefox_window, other_window]
+
+    class FakeAuto:
+        @staticmethod
+        def GetRootControl():
+            return Root()
+
+        @staticmethod
+        def ControlFromHandle(handle):
+            assert handle == 501
+            return firefox_window
+
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            assert control is firefox_window
+            return iter(((tab, 2), (address, 3)))
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+    )
+
+    assert driver.enumerate_firefox_windows() == (501,)
+    tabs = driver.enumerate_tabs(501)
+    assert tabs == (
+        firefox.FirefoxTabRef(501, "uia:42,7,9", "Two — Build Team Two"),
+    )
+
+    driver.select_tab(501, "uia:42,7,9")
+    assert tab.selection.selected is True
+    assert driver.read_address_value(501) == (
+        "https://chatgpt.com/c/target-two?ignored=1"
+    )
+    assert driver.read_visible_identity(501, "uia:42,7,9") == (
+        "Two — Build Team Two"
+    )
+
+
+def test_uiautomation_driver_requires_windows_when_backend_not_injected(monkeypatch):
+    import radar.windows_firefox_target as firefox
+
+    monkeypatch.setattr(firefox, "_is_windows", lambda: False)
+    with pytest.raises(firefox.FirefoxTargetError, match="WINDOWS_REQUIRED"):
+        firefox.UiautomationFirefoxDriver()
