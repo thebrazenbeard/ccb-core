@@ -62,7 +62,7 @@ def test_discovery_selects_tabs_and_requires_both_exact_selectors():
     assert driver.selected == [(11, "tab-a"), (11, "tab-b"), (22, "tab-c")]
 
 
-def test_snapshot_reselects_exact_tab_and_rereads_both_selectors():
+def test_snapshot_reads_both_selectors_without_reselecting():
     import radar.windows_firefox_target as firefox
 
     class FakeDriver:
@@ -87,7 +87,7 @@ def test_snapshot_reselects_exact_tab_and_rereads_both_selectors():
     assert observed.target_token == "tab-exact"
     assert observed.normalized_url_path == "/c/target-two"
     assert observed.visible_identity == "Two — Build Team Two"
-    assert driver.selected == [(77, "tab-exact")]
+    assert driver.selected == []
 
 
 def test_adapter_operations_keep_exact_tab_token_through_visible_text_io():
@@ -196,6 +196,11 @@ def test_uiautomation_driver_enumerates_firefox_tabs_and_reads_chatgpt_address()
         name="Search with Google or enter address",
         value="https://chatgpt.com/c/target-two?ignored=1",
     )
+    active_document = Control(
+        control_type="DocumentControl",
+        name="Two — Build Team Two",
+    )
+    active_document.IsOffscreen = False
 
     class Root:
         def GetChildren(self):
@@ -214,7 +219,7 @@ def test_uiautomation_driver_enumerates_firefox_tabs_and_reads_chatgpt_address()
         @staticmethod
         def WalkControl(control, includeTop=False, maxDepth=0):
             assert control is firefox_window
-            return iter(((tab, 2), (address, 3)))
+            return iter(((tab, 2), (address, 3), (active_document, 4)))
 
     driver = firefox.UiautomationFirefoxDriver(
         auto_module=FakeAuto,
@@ -359,7 +364,7 @@ def test_post_submit_readback_reselects_bound_tab_before_observation():
             self.selected += 1
             return True
 
-    class Control:
+    class Tab:
         ControlTypeName = "TabItemControl"
         Name = "Two — Build Team Two"
 
@@ -372,16 +377,30 @@ def test_post_submit_readback_reselects_bound_tab_before_observation():
         def GetSelectionItemPattern(self):
             return self.selection
 
-    tab = Control()
+    class Document:
+        ControlTypeName = "DocumentControl"
+        Name = "Two — Build Team Two"
+        IsOffscreen = False
+
+        def GetValuePattern(self):
+            return None
+
+    window = object()
+    tab = Tab()
+    document = Document()
 
     class FakeAuto:
         @staticmethod
         def ControlFromHandle(handle):
-            return object()
+            return window
 
         @staticmethod
         def WalkControl(control, includeTop=False, maxDepth=0):
-            return iter(((tab, 2),))
+            if control is window:
+                return iter(((tab, 2), (document, 4)))
+            if control is document:
+                return iter(())
+            return iter(())
 
     driver = firefox.UiautomationFirefoxDriver(
         auto_module=FakeAuto,
