@@ -210,7 +210,8 @@ class UiautomationFirefoxDriver:
         if pattern is not None:
             try:
                 if not pattern.IsReadOnly:
-                    return bool(pattern.SetValue(text, waitTime=0))
+                    if pattern.SetValue(text, waitTime=0):
+                        return True
             except Exception:
                 pass
         try:
