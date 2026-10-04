@@ -1,4 +1,6 @@
 import importlib.util
+import json
+from pathlib import Path
 
 import pytest
 
@@ -241,3 +243,63 @@ def test_uiautomation_driver_requires_windows_when_backend_not_injected(monkeypa
     monkeypatch.setattr(firefox, "_is_windows", lambda: False)
     with pytest.raises(firefox.FirefoxTargetError, match="WINDOWS_REQUIRED"):
         firefox.UiautomationFirefoxDriver()
+
+
+def test_local_target_config_resolves_one_exact_recipient(tmp_path):
+    import radar.windows_firefox_target as firefox
+
+    config = tmp_path / "targets.json"
+    config.write_text(
+        json.dumps({
+            "version": 1,
+            "targets": [
+                {
+                    "recipient": "TWO",
+                    "conversation_url": "https://chatgpt.com/c/two?ignored=1",
+                    "visible_identity": "Two — Build Team Two",
+                },
+                {
+                    "recipient": "THREE",
+                    "conversation_url": "https://chatgpt.com/c/three",
+                    "visible_identity": "Three — Build Team Two",
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    descriptor = firefox.load_target_descriptor(config, "TWO")
+
+    assert descriptor.recipient == "TWO"
+    assert descriptor.normalized_url_path == "/c/two"
+    assert descriptor.visible_identity == "Two — Build Team Two"
+
+
+def test_local_target_config_rejects_duplicate_recipient(tmp_path):
+    import radar.windows_firefox_target as firefox
+
+    config = tmp_path / "targets.json"
+    config.write_text(
+        json.dumps({
+            "version": 1,
+            "targets": [
+                {
+                    "recipient": "TWO",
+                    "conversation_url": "https://chatgpt.com/c/one",
+                    "visible_identity": "Two — One",
+                },
+                {
+                    "recipient": "TWO",
+                    "conversation_url": "https://chatgpt.com/c/two",
+                    "visible_identity": "Two — Two",
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        firefox.FirefoxTargetError,
+        match="TARGET_CONFIG_AMBIGUOUS",
+    ):
+        firefox.load_target_descriptor(config, "TWO")
