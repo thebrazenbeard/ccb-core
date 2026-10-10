@@ -77,12 +77,23 @@ class LogicalEndpoint:
             ):
                 raise IdentityError("INVALID_ICON_EMOJI")
 
+        # A frozen dataclass does not freeze a caller-owned list or generator.
+        # Snapshot and normalize aliases before the endpoint enters a registry.
+        if isinstance(self.aliases, (str, bytes)):
+            raise IdentityError("INVALID_ENDPOINT_ALIASES")
+        try:
+            supplied = tuple(self.aliases)
+        except TypeError as exc:
+            raise IdentityError("INVALID_ENDPOINT_ALIASES") from exc
         seen: set[str] = set()
-        for alias in self.aliases:
+        canonical_aliases: list[str] = []
+        for alias in supplied:
             normalized = normalize_address(alias)
             if normalized == canonical or normalized in seen:
                 raise IdentityError("DUPLICATE_ENDPOINT_ALIAS")
             seen.add(normalized)
+            canonical_aliases.append(normalized)
+        object.__setattr__(self, "aliases", tuple(canonical_aliases))
 
     @classmethod
     def create(cls,
