@@ -18,6 +18,11 @@ _SLACK_USER_RE: Final[Pattern[str]] = re.compile(r"^[UW][A-Z0-9]+$")
 class IdentityError(ValueError):
     """Raised when logical endpoint configuration is ambiguous or invalid."""
 
+def _require_alias_iterable(value: object) -> None:
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Iterable):
+        raise IdentityError("ALIASES_MUST_BE_ITERABLE")
+
+
 
 def normalize_address(value: str) -> str:
     """Normalize a user-facing logical address to its canonical lookup key.
@@ -77,6 +82,7 @@ class LogicalEndpoint:
             ):
                 raise IdentityError("INVALID_ICON_EMOJI")
 
+        _require_alias_iterable(self.aliases)
         seen: set[str] = set()
         for alias in self.aliases:
             normalized = normalize_address(alias)
@@ -96,6 +102,7 @@ class LogicalEndpoint:
 
         This avoids forcing callers to pre-normalize endpoint_id/aliases.
         """
+        _require_alias_iterable(aliases)
         canonical_id = normalize_address(endpoint_id)
         canonical_aliases = tuple(normalize_address(a) for a in aliases)
         return cls(
