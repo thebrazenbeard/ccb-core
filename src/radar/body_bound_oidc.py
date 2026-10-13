@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Callable
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -75,8 +76,28 @@ def post_body_bound_json(
     try:
         with opener(request, timeout=timeout) as response:
             raw = response.read()
+    except HTTPError as exc:
+        # The Edge Function returns a bounded machine code. Preserve only that
+        # code, never arbitrary response text, headers, request bytes or tokens.
+        reason = f"HTTP_{exc.code}"
+        try:
+            diagnostic = json.loads(exc.read(4096).decode("utf-8"))
+            if isinstance(diagnostic, dict) and diagnostic.get("ok") is False:
+                candidate = diagnostic.get("error")
+                if (
+                    type(candidate) is str
+                    and 2 <= len(candidate) <= 80
+                    and candidate[0].isupper()
+                    and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in candidate)
+                ):
+                    reason += f":{candidate}"
+        except (UnicodeError, ValueError, OSError):
+            pass
+        raise BodyBoundOidcError(f"BOUND_PROVIDER_REJECTED:{reason}") from None
     except Exception as exc:
-        raise BodyBoundOidcError(f"BOUND_PROVIDER_REQUEST_FAILED:{exc}") from exc
+        raise BodyBoundOidcError(
+            f"BOUND_PROVIDER_REQUEST_FAILED:{type(exc).__name__}"
+        ) from exc
 
     try:
         result = json.loads(raw.decode("utf-8"))
