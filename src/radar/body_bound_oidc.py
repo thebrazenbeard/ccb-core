@@ -5,10 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Callable
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
 PROVIDER_AUDIENCE_PREFIX = "chat-communication-bus-supabase:"
+_MAX_ERROR_BODY_BYTES = 1024
+_KNOWN_UNAVAILABLE_CODES = frozenset(
+    {
+        "OIDC_JWKS_UNAVAILABLE",
+        "OIDC_JWKS_INVALID",
+        "TRUSTED_PROJECTOR_SHA_INVALID",
+        "PROJECT_CONCURRENCY_INVALID",
+        "PROVIDER_CONFIGURATION_MISSING",
+    }
+)
 
 
 class BodyBoundOidcError(RuntimeError):
@@ -38,6 +49,31 @@ def provider_audience(digest: str) -> str:
     if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise BodyBoundOidcError("BOUND_BODY_DIGEST_INVALID")
     return f"{PROVIDER_AUDIENCE_PREFIX}{digest}"
+
+
+def _safe_provider_http_error(exc: HTTPError) -> str:
+    """Surface only vetted 503 codes; never echo untrusted provider body text.
+
+    A failed response may contain arbitrary fields or sensitive data. It cannot
+    supply an error label unless it matches a code the source itself emits.
+    """
+    status = exc.code
+    label = f"HTTP_{status}"
+    if status != 503:
+        return label
+    try:
+        raw = exc.read(_MAX_ERROR_BODY_BYTES + 1)
+        if len(raw) > _MAX_ERROR_BODY_BYTES:
+            return label
+        parsed = json.loads(raw.decode("utf-8"))
+    except Exception:
+        # An arbitrary failed response cannot force its body or exception
+        # details into the diagnostic path.
+        return label
+    code = parsed.get("error") if isinstance(parsed, dict) else None
+    if isinstance(code, str) and code in _KNOWN_UNAVAILABLE_CODES:
+        return f"{label}:{code}"
+    return label
 
 
 def post_body_bound_json(
@@ -75,8 +111,14 @@ def post_body_bound_json(
     try:
         with opener(request, timeout=timeout) as response:
             raw = response.read()
+    except HTTPError as exc:
+        raise BodyBoundOidcError(
+            f"BOUND_PROVIDER_REQUEST_FAILED:{_safe_provider_http_error(exc)}"
+        ) from None
     except Exception as exc:
-        raise BodyBoundOidcError(f"BOUND_PROVIDER_REQUEST_FAILED:{exc}") from exc
+        raise BodyBoundOidcError(
+            f"BOUND_PROVIDER_REQUEST_FAILED:{type(exc).__name__}"
+        ) from None
 
     try:
         result = json.loads(raw.decode("utf-8"))
