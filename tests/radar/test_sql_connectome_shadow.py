@@ -201,6 +201,67 @@ class ShadowIdentityTests(unittest.TestCase):
                 self.assertEqual(candidate.status, "UNKNOWN")
                 self.assertEqual(candidate.reason, "INVALID_CANDIDATE_PROJECTION")
 
+    def test_list_subclass_cannot_lie_about_length_to_bypass_row_budget(self):
+        class LengthSpoofingRows(list):
+            yielded = 0
+
+            def __len__(self):
+                return 0
+
+            def __iter__(self):
+                for number in range(1_500):
+                    self.yielded += 1
+                    yield {"identity_id": f"id-{number}", "display_name": "Name"}
+
+        malicious_candidate = LengthSpoofingRows()
+        candidate = compare_identity_shadow(
+            [], self.reader(malicious_candidate),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (candidate.status, candidate.reason),
+            ("UNKNOWN", "INVALID_CANDIDATE_PROJECTION"),
+        )
+        self.assertLessEqual(malicious_candidate.yielded, 1_001)
+        self.calls.clear()
+        malicious_expected = LengthSpoofingRows()
+        expected = compare_identity_shadow(
+            malicious_expected, self.reader([]),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (expected.status, expected.reason),
+            ("UNKNOWN", "INVALID_EXPECTED_PROJECTION"),
+        )
+        self.assertLessEqual(malicious_expected.yielded, 1_001)
+        self.assertEqual(self.calls, [])
+
+    def test_exact_row_budget_matches_but_one_extra_fails_closed(self):
+        valid = [
+            {"identity_id": f"id-{number}", "display_name": "Name"}
+            for number in range(1_000)
+        ]
+        match = compare_identity_shadow(
+            valid, self.reader(list(valid)),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(match.status, "MATCH_UNQUALIFIED")
+        self.assertFalse(match.cutover_authorized)
+
+        overflow = valid + [{"identity_id": "extra", "display_name": "Name"}]
+        result = compare_identity_shadow(
+            valid, self.reader(overflow),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (result.status, result.reason),
+            ("UNKNOWN", "INVALID_CANDIDATE_PROJECTION"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
