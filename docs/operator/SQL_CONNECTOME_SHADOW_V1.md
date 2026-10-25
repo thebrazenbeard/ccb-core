@@ -30,6 +30,15 @@ outside this comparator; an injected reader can otherwise block indefinitely.
 The comparator bounds rows and UTF-8 identity field sizes, but cannot prove
 database transaction isolation or the reader's behavior.
 
+The report's `canonical`, `cutover_authorized`, and
+`unverified_capabilities` values are read-only computed properties, not
+constructor or `dataclasses.replace()` arguments. This prevents ordinary
+source-level callers from forging a promoted report by replacing a frozen
+dataclass field. A Python object (including this report) is never a security
+boundary: actual cutover still requires independently governed provider,
+identity, policy, and deployment checks. The `status` and source commit strings
+remain caller-visible evidence, not authority tokens.
+
 No successful report here authorizes cutting CCB from Supabase. The comparator
 does **not** establish the endpoint, TLS peer, database physical identity,
 privileged function safety, object grants, JWT/RLS tenant isolation, generated

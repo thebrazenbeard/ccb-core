@@ -37,9 +37,14 @@ _UNVERIFIED = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ShadowIdentityReport:
-    """Comparison evidence with intentionally non-promotable authority flags."""
+    """Source-only comparison with non-constructible authority-denial flags.
+
+    These computed properties prevent accidental promotion by ordinary
+    constructors or ``dataclasses.replace``. A Python object is never itself
+    an authorization credential or a trustworthy database attestation.
+    """
 
     status: str
     reason: str
@@ -47,9 +52,18 @@ class ShadowIdentityReport:
     candidate_source_commit: str | None
     expected_digest: str | None
     observed_digest: str | None
-    unverified_capabilities: tuple[str, ...] = _UNVERIFIED
-    canonical: bool = False
-    cutover_authorized: bool = False
+
+    @property
+    def unverified_capabilities(self) -> tuple[str, ...]:
+        return _UNVERIFIED
+
+    @property
+    def canonical(self) -> bool:
+        return False
+
+    @property
+    def cutover_authorized(self) -> bool:
+        return False
 
 
 def _bounded_text(value: object) -> str:
