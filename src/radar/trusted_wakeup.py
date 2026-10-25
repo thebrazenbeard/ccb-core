@@ -10,9 +10,9 @@ from .trusted_reconciler import ReconcileError
 from .writer_lanes import load_writer_lanes
 
 
-EXPECTED_REPOSITORY = "example/ccb-core"
 _ALLOWED_EVENT_NAMES = frozenset({"workflow_run", "schedule"})
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
+_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 def load_caller_event(path: str | Path) -> dict[str, object]:
@@ -33,6 +33,22 @@ def _active_identity_for_branch(topology_path: str | Path, branch: str) -> str:
     return matches[0]
 
 
+def _topology_repository(topology_path: str | Path) -> str:
+    """Read the repository binding from the deployment-supplied control cut.
+
+    The trusted workflow supplies this topology from its canonical checkout;
+    this equality check is not independent proof of the checkout's provenance.
+    """
+    try:
+        raw = json.loads(Path(topology_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ReconcileError("TRUSTED_TOPOLOGY_REPOSITORY_INVALID") from exc
+    repository = raw.get("repository") if isinstance(raw, dict) else None
+    if not isinstance(repository, str) or _REPOSITORY.fullmatch(repository) is None:
+        raise ReconcileError("TRUSTED_TOPOLOGY_REPOSITORY_INVALID")
+    return repository
+
+
 def requested_identities(
     *,
     event_name: str,
@@ -41,7 +57,7 @@ def requested_identities(
     repository: str,
 ) -> tuple[tuple[str, ...], str | None]:
     """Return canonical ACTIVE identities; workflow head is observation metadata only."""
-    if repository != EXPECTED_REPOSITORY:
+    if repository != _topology_repository(topology_path):
         raise ReconcileError("UNTRUSTED_CALLER_REPOSITORY")
     if event_name not in _ALLOWED_EVENT_NAMES:
         raise ReconcileError("UNSUPPORTED_CALLER_EVENT")
@@ -61,7 +77,6 @@ def requested_identities(
 
 
 __all__ = [
-    "EXPECTED_REPOSITORY",
     "load_caller_event",
     "requested_identities",
 ]
