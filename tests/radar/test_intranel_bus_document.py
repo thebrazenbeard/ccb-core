@@ -1,6 +1,7 @@
 """Source-stage INTRANEL/1 carriage across the actual Bus writer-lane grammar."""
 
 import json
+import hashlib
 
 import pytest
 
@@ -10,6 +11,10 @@ from radar.intranel_bus_document import (
     encode_intranel_bus_document,
 )
 from radar.message_grammar import parse_bus_document
+from radar.safe_lane_append import (
+    CommitReadback, CommittedMessage, ControlSnapshot, FileReadback,
+    IdentityHistory, LaneBinding, SafeAppendError, SafeLaneAppender,
+)
 
 
 LANE = "agent_alpha"
@@ -67,13 +72,14 @@ def encode(raw=None, **changes):
     return encode_intranel_bus_document(raw if raw is not None else semantic(), **args)
 
 
-def decode(doc):
+def decode(doc, *, prev=None):
     return decode_intranel_bus_document(
         doc,
         expected_lane_identity=LANE,
         expected_writer=WRITER,
         expected_recipient=RECIPIENT,
         expected_target=TARGET,
+        expected_prev_bus_message_id=prev,
     )
 
 
@@ -255,3 +261,135 @@ def test_partial_or_unknown_wire_fields_are_not_a_canonical_intranel_packet():
         canonical = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
         with pytest.raises(IntranelBusCarriageError):
             encode(canonical)
+
+
+class FakeBoundedWriterLane:
+    """In-memory object/ref backend; never calls GitHub or a protected Bus."""
+
+    def __init__(self):
+        self.branch = "bus/agent-alpha"
+        self.head = "a" * 40
+        self.blobs = {}
+        self.trees = {}
+        self.commits = {}
+        self.files = {}
+        self.history = []
+
+    def read(self):
+        return ControlSnapshot(
+            repository="example/ccb-base", control_commit_sha="b" * 40,
+            topology_digest="test-topology-digest",
+            lanes={LANE: LaneBinding(identity=LANE, writer=WRITER, branch=self.branch)},
+        )
+
+    def read_identity(self, identity):
+        assert identity == LANE
+        return IdentityHistory(
+            complete=True,
+            tip_message_ids=(self.history[-1].message_id,) if self.history else (),
+            messages=tuple(self.history),
+        )
+
+    def read_branch_head(self, branch):
+        assert branch == self.branch
+        return self.head
+
+    def read_file_at_commit(self, commit_sha, path):
+        return self.files.get((commit_sha, path))
+
+    def read_commit(self, commit_sha):
+        return self.commits.get(commit_sha)
+
+    def create_blob(self, content):
+        digest = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+        self.blobs[digest] = content
+        return digest
+
+    def create_tree(self, base_commit_sha, path, blob_sha):
+        digest = hashlib.sha1((base_commit_sha + path + blob_sha).encode()).hexdigest()
+        self.trees[digest] = (path, blob_sha)
+        return digest
+
+    def create_commit(self, message, tree_sha, parent_sha):
+        digest = hashlib.sha1((message + tree_sha + parent_sha).encode()).hexdigest()
+        path, blob_sha = self.trees[tree_sha]
+        self.commits[digest] = CommitReadback(
+            parent_shas=(parent_sha,), tree_sha=tree_sha, changed_paths=(path,),
+        )
+        self.files[(digest, path)] = FileReadback(
+            blob_sha=blob_sha, content=self.blobs[blob_sha],
+        )
+        return digest
+
+    def update_ref_non_force(self, branch, candidate_sha):
+        assert branch == self.branch
+        self.head = candidate_sha
+        return True
+
+    def record(self, receipt):
+        self.history.append(CommittedMessage(
+            message_id=receipt.message_id,
+            message_sha256=receipt.message_sha256,
+            commit_sha=receipt.commit_sha,
+            path=receipt.path,
+            blob_sha=receipt.message_blob_sha,
+            prev_message_id=receipt.prev_message_id,
+            branch=receipt.lane_ref,
+        ))
+
+
+def test_intranel_bus_document_crosses_safe_append_and_readback_twice():
+    backend = FakeBoundedWriterLane()
+    appender = SafeLaneAppender(
+        control_source=backend, history_source=backend, git_backend=backend,
+    )
+    first_bytes = encode(semantic(message_id="intranel-first", operation_id="op-01"))
+    original_head = backend.head
+    first = appender.append_bus_message_v1(LANE, original_head, first_bytes)
+    assert first.result == "APPENDED"
+    assert first.readback_verified is True
+    assert first.path == f"messages/{BUS_ID}.md"
+    assert decode(backend.read_file_at_commit(first.commit_sha, first.path).content).semantic_message_id == "intranel-first"
+    backend.record(first)  # Represent *independently reconstructed* committed history.
+
+    incorrect_prev = encode_intranel_bus_document(
+        semantic(message_id="intranel-bad-prev"),
+        lane_identity=LANE, writer=WRITER,
+        bus_message_id="agent_alpha-bad-prev", intended_recipient=RECIPIENT,
+        prev_bus_message_id="agent_alpha-unrelated",
+    )
+    with pytest.raises(SafeAppendError, match="PREDECESSOR_MISMATCH"):
+        appender.append_bus_message_v1(LANE, backend.head, incorrect_prev)
+
+    # A reply is a new Bus writer-lane message, not the semantic parent packet.
+    second_id = "agent_alpha-bounded-002"
+    second_bytes = encode_intranel_bus_document(
+        semantic(message_id="intranel-second", operation_id="op-02",
+                 parent_message_id="intranel-first"),
+        lane_identity=LANE, writer=WRITER, bus_message_id=second_id,
+        intended_recipient=RECIPIENT, prev_bus_message_id=BUS_ID,
+    )
+    second = appender.append_bus_message_v1(LANE, backend.head, second_bytes)
+    assert second.result == "APPENDED"
+    assert second.prev_message_id == BUS_ID
+    assert second.readback_verified is True
+    assert decode(second_bytes, prev=BUS_ID).prev_bus_message_id == BUS_ID
+    with pytest.raises(IntranelBusCarriageError):
+        decode(second_bytes)  # No trusted predecessor supplied.
+    backend.record(second)
+    stale_third = encode_intranel_bus_document(
+        semantic(message_id="intranel-stale"), lane_identity=LANE,
+        writer=WRITER, bus_message_id="agent_alpha-bounded-003",
+        intended_recipient=RECIPIENT, prev_bus_message_id=second_id,
+    )
+    with pytest.raises(SafeAppendError, match="STALE_LANE_HEAD"):
+        appender.append_bus_message_v1(LANE, original_head, stale_third)
+
+    # Repetition after head advances reconciles the original effect, but a
+    # reused writer-local Bus ID with different semantics hard-collides.
+    repeated = appender.append_bus_message_v1(LANE, first.expected_lane_head, first_bytes)
+    assert repeated.result == "ALREADY_COMMITTED"
+    assert repeated.readback_verified is True
+    altered_bytes = encode(semantic(message_id="intranel-altered"))
+    with pytest.raises(SafeAppendError, match="MESSAGE_ID_COLLISION"):
+        appender.append_bus_message_v1(LANE, original_head, altered_bytes)

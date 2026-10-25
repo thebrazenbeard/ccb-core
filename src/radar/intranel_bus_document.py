@@ -9,6 +9,9 @@ route the result, and invoke official Intranel ``parse_message`` plus the full
 receiver-side admission policy. A well-formed document is not authenticated,
 semantically admitted, or authorized here. A claim of ``RECEIPT`` is not an
 effect readback. Operation-level replay protection is external and durable.
+This codec is opt-in; ``SafeLaneAppender`` also accepts unrelated ordinary
+Bus documents, so an untrusted sender's bypass of this codec must not grant
+Intranel admission or an authorized effect at the receiving endpoint.
 
 The Bus's ``message_id`` is writer-local and never equals the semantic
 Intranel packet ``message_id``. The exact canonical semantic JSON is the body
@@ -51,7 +54,7 @@ _INTRANEL_CANONICAL_FIELDS = frozenset({
 })
 _HEADER_NAMES = frozenset(
     {
-        "message_id", "writer", "intended_recipient", "created_at",
+        "message_id", "prev_message_id", "writer", "intended_recipient", "created_at",
         "requires_ack", "intranel_protocol", "intranel_message_id_b64u",
         "intranel_operation_id_b64u", "intranel_origin", "intranel_actor",
         "intranel_target", "semantic_sha256",
@@ -70,6 +73,7 @@ class IntranelBusCarriageError(ValueError):
 @dataclass(frozen=True)
 class DecodedIntranelBusDocument:
     bus_message_id: str
+    prev_bus_message_id: str | None
     writer: str
     recipient: str
     semantic_message_id: str
@@ -234,10 +238,19 @@ def encode_intranel_bus_document(
     writer: str,
     bus_message_id: str,
     intended_recipient: str,
+    prev_bus_message_id: str | None = None,
 ) -> bytes:
-    """Create source-only carriage bytes; this function never appends or routes."""
+    """Create source-only bytes; this function never appends or routes.
+
+    ``prev_bus_message_id`` is the trusted writer-lane history tip for the
+    *outer* Bus chain, unrelated to Intranel's semantic parent_message_id.
+    The caller must acquire that history through its normal control plane.
+    """
     raw = _semantic(canonical_message_bytes)
     _check_writer_id(lane_identity, bus_message_id)
+    if prev_bus_message_id is not None:
+        _check_writer_id(lane_identity, prev_bus_message_id)
+        _require(prev_bus_message_id != bus_message_id, "BUS_PREDECESSOR_SELF_REFERENCE")
     _require(isinstance(writer, str) and bool(writer) and writer.strip() == writer
              and len(writer) <= 128
              and all(0x20 <= ord(c) <= 0x7E and c not in "`\"'" for c in writer),
@@ -265,6 +278,8 @@ def encode_intranel_bus_document(
         ("intranel_target", raw["target"]),
         ("semantic_sha256", digest),
     ]
+    if prev_bus_message_id is not None:
+        fields.append(("prev_message_id", prev_bus_message_id))
     if raw.get("operation_id") is not None:
         fields.append(("intranel_operation_id_b64u", _id_b64(raw["operation_id"])))
     result = ("\n".join(f"{key}: {value}" for key, value in fields) + "\n\n").encode("utf-8") + canonical_message_bytes
@@ -279,6 +294,7 @@ def decode_intranel_bus_document(
     expected_writer: str,
     expected_recipient: str,
     expected_target: str,
+    expected_prev_bus_message_id: str | None = None,
 ) -> DecodedIntranelBusDocument:
     """Check byte/header bindings against independently trusted routing inputs.
 
@@ -293,6 +309,10 @@ def decode_intranel_bus_document(
     except MessageGrammarError as exc:
         raise IntranelBusCarriageError("BUS_GRAMMAR_INVALID") from exc
     _check_writer_id(expected_lane_identity, parsed.message_id)
+    if expected_prev_bus_message_id is not None:
+        _check_writer_id(expected_lane_identity, expected_prev_bus_message_id)
+    _require(parsed.headers.get("prev_message_id") == expected_prev_bus_message_id,
+             "BUS_PREDECESSOR_MISMATCH")
     _require(parsed.writer == expected_writer, "BUS_WRITER_MISMATCH")
     _require(parsed.intended_recipient == expected_recipient, "BUS_RECIPIENT_MISMATCH")
     _require(set(parsed.headers) <= _HEADER_NAMES, "BUS_UNEXPECTED_HEADER")
@@ -303,6 +323,7 @@ def decode_intranel_bus_document(
     expected = encode_intranel_bus_document(
         semantic, lane_identity=expected_lane_identity, writer=expected_writer,
         bus_message_id=parsed.message_id, intended_recipient=expected_recipient,
+        prev_bus_message_id=expected_prev_bus_message_id,
     )
     # Complete byte comparison detects inserted, dropped, duplicated, or
     # contradictory wrapper headers, not only digest or parsed-body equality.
@@ -310,6 +331,7 @@ def decode_intranel_bus_document(
     _require(bool(_DIGEST.fullmatch(digest)), "SEMANTIC_DIGEST_INVALID")
     return DecodedIntranelBusDocument(
         bus_message_id=parsed.message_id,
+        prev_bus_message_id=expected_prev_bus_message_id,
         writer=parsed.writer,
         recipient=parsed.intended_recipient,
         semantic_message_id=raw["message_id"],
