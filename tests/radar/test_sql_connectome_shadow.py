@@ -1,8 +1,9 @@
 """Shadow comparisons cannot qualify a replacement provider or write state."""
 
 import unittest
+from dataclasses import replace
 
-from radar.sql_connectome_shadow import compare_identity_shadow
+from radar.sql_connectome_shadow import ShadowIdentityReport, compare_identity_shadow
 
 
 class ShadowIdentityTests(unittest.TestCase):
@@ -131,6 +132,36 @@ class ShadowIdentityTests(unittest.TestCase):
         self.assertEqual(report.status, "MATCH_UNQUALIFIED")
         self.assertFalse(report.canonical)
         self.assertFalse(report.cutover_authorized)
+
+    def test_report_constructor_and_replace_cannot_forge_cutover_authority(self):
+        report = compare_identity_shadow(
+            [{"identity_id": "a", "display_name": "A"}],
+            self.reader([{"identity_id": "a", "display_name": "A"}]),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="f" * 40,
+        )
+        self.assertEqual(report.status, "MATCH_UNQUALIFIED")
+        for forged in (
+            {"canonical": True},
+            {"cutover_authorized": True},
+            {"unverified_capabilities": ()},
+        ):
+            with self.subTest(forged=forged):
+                with self.assertRaises(TypeError):
+                    replace(report, **forged)
+                with self.assertRaises(TypeError):
+                    ShadowIdentityReport(
+                        status="MATCH_UNQUALIFIED",
+                        reason="ONE_PROJECTION_MATCHES_ONLY",
+                        reference_source_commit="9" * 40,
+                        candidate_source_commit="f" * 40,
+                        expected_digest=report.expected_digest,
+                        observed_digest=report.observed_digest,
+                        **forged,
+                    )
+        self.assertFalse(report.canonical)
+        self.assertFalse(report.cutover_authorized)
+        self.assertIn("physical_provider_identity", report.unverified_capabilities)
 
     def test_row_adapter_runtime_error_remains_unknown(self):
         class BrokenRow(dict):
