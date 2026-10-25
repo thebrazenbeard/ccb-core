@@ -45,6 +45,18 @@ py -m venv .venv
 
 Supabase SQL qualification additionally requires a working local Supabase/Docker/PostgreSQL toolchain.
 
+### SQL Connectome shadow comparison (source-only)
+
+`radar.sql_connectome_shadow.compare_identity_shadow` can compare a bounded
+`radar.identities` readback from an **operator-supplied, independently read-only**
+SQL Connectome candidate reader against a separately sourced expected identity
+projection. It uses one fixed parameterized SELECT, emits source-assertion and
+row digests, and never creates a database connection or changes provider routes.
+Even an exact match is `MATCH_UNQUALIFIED`, not provider identity, Auth/RLS,
+Realtime, recovery, authorization, or Supabase replacement qualification.
+Unknown reads and malformed inputs fail closed. See
+`docs/operator/SQL_CONNECTOME_SHADOW_V1.md` for the limits and acceptance gates.
+
 ## License
 
 Source-visible, not open source. Original material is proprietary. Commercial use, redistribution, hosted-service use, and commercial derivative products require written permission. See `LICENSE` and `COMMERCIAL_LICENSE.md`. Separately identified third-party components retain their own licenses.
