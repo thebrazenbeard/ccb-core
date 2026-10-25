@@ -18,6 +18,12 @@ See `docs/operator/REPOSITORY_ROLES.md` and `PUBLIC_CORE_BOUNDARY.md`.
 
 CCB Base implements and tests strict taxonomy admission/DLQ handling; exact node registration, leases, subscriptions, and routing; priorities 0–4 with immediate priority-0 dispatch; deterministic 500 ms duplicate suppression; durable accounting and 60-second heartbeats; append-safe projection/reconciliation; provider-neutral Supabase migrations; and fail-closed provider-state write boundaries.
 
+## Optional Intranel source-stage document carriage
+
+[`src/radar/intranel_bus_document.py`](src/radar/intranel_bus_document.py) provides bounded, opt-in `INTRANEL/1` canonical-message carriage through the existing Bus writer-lane document grammar. It keeps writer-local Bus `message_id` distinct from semantic Intranel `message_id`, and writer-lane predecessor linkage distinct from the semantic parent relation. The codec admits only source-stage `OPEN` / `READ_ONLY` document shapes; the tests exercise in-memory `SafeLaneAppender` first, second, duplicate, collision, and stale-head behavior.
+
+This is **not** an authenticated installed Bus writer, reader, transport, remote host-peer service, receipt verifier, or effect grant. A trusted deployment must separately bind authenticated writer/lane/recipient, perform full Intranel receiver admission, enforce durable operation replay policy, and read back real persisted delivery and effects. Intranel host-peer traffic (Lappy/VN1/VN2) is a separate direct-machine integration problem; this Bus codec addresses cross-chat carriage only.
+
 ## Privacy and deployment boundary
 
 CCB Base deliberately does **not** contain private mailbox history, named persona/identity state, private writer-lane contents, private checkpoints, credentials, deployment-specific trust anchors, or private topology snapshots.
