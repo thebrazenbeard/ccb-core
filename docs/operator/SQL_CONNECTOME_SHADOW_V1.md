@@ -25,6 +25,11 @@ reader are **caller assertions**, not source authentication or physical
 database attestation. Extra data in a response such as `canonical=true` is
 ignored as an authority claim.
 
+The future caller must enforce a database statement and connection deadline
+outside this comparator; an injected reader can otherwise block indefinitely.
+The comparator bounds rows and UTF-8 identity field sizes, but cannot prove
+database transaction isolation or the reader's behavior.
+
 No successful report here authorizes cutting CCB from Supabase. The comparator
 does **not** establish the endpoint, TLS peer, database physical identity,
 privileged function safety, object grants, JWT/RLS tenant isolation, generated

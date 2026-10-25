@@ -18,6 +18,7 @@ from typing import Any
 
 _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 _MAX_IDENTITIES = 1_000
+_MAX_FIELD_BYTES = 4_096
 _IDENTITY_SQL = (
     "select identity_id, display_name "
     "from radar.identities order by identity_id limit %s"
@@ -51,6 +52,18 @@ class ShadowIdentityReport:
     cutover_authorized: bool = False
 
 
+def _bounded_text(value: object) -> str:
+    if not isinstance(value, str) or len(value) > _MAX_FIELD_BYTES:
+        raise ValueError("identity field exceeds text bound")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ValueError("invalid identity UTF-8 text") from exc
+    if len(encoded) > _MAX_FIELD_BYTES or not value.strip():
+        raise ValueError("identity rows require bounded nonempty text")
+    return value.strip()
+
+
 def _identities(raw: object) -> tuple[tuple[str, str], ...]:
     if not isinstance(raw, (list, tuple)) or len(raw) > _MAX_IDENTITIES:
         raise ValueError("identity projection must be a bounded list or tuple")
@@ -59,17 +72,10 @@ def _identities(raw: object) -> tuple[tuple[str, str], ...]:
         if not isinstance(row, Mapping):
             raise ValueError("identity rows must be mappings")
         identity_id, display_name = row.get("identity_id"), row.get("display_name")
-        if (
-            not isinstance(identity_id, str)
-            or not identity_id.strip()
-            or not isinstance(display_name, str)
-            or not display_name.strip()
-        ):
-            raise ValueError("identity rows require nonempty text")
-        canonical_id = identity_id.strip().casefold()
+        canonical_id = _bounded_text(identity_id).casefold()
         if canonical_id in identities:
             raise ValueError("duplicate normalized identity ID")
-        identities[canonical_id] = display_name.strip()
+        identities[canonical_id] = _bounded_text(display_name)
     return tuple(sorted(identities.items()))
 
 
@@ -108,7 +114,7 @@ def compare_identity_shadow(
         )
     try:
         expected = _identities(expected_identities)
-    except (TypeError, ValueError):
+    except Exception:
         return ShadowIdentityReport(
             "UNKNOWN", "INVALID_EXPECTED_PROJECTION", reference_source_commit,
             candidate_source_commit, None, None
@@ -124,7 +130,7 @@ def compare_identity_shadow(
         )
     try:
         observed = _identities(raw)
-    except (TypeError, ValueError):
+    except Exception:
         return ShadowIdentityReport(
             "UNKNOWN", "INVALID_CANDIDATE_PROJECTION", reference_source_commit,
             candidate_source_commit,

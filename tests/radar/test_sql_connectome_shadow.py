@@ -132,6 +132,44 @@ class ShadowIdentityTests(unittest.TestCase):
         self.assertFalse(report.canonical)
         self.assertFalse(report.cutover_authorized)
 
+    def test_row_adapter_runtime_error_remains_unknown(self):
+        class BrokenRow(dict):
+            def get(self, _key, _default=None):
+                raise RuntimeError("driver row materialization failed")
+
+        good = [{"identity_id": "a", "display_name": "A"}]
+        candidate = compare_identity_shadow(
+            good, self.reader([BrokenRow()]),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (candidate.status, candidate.reason),
+            ("UNKNOWN", "INVALID_CANDIDATE_PROJECTION"),
+        )
+        expected = compare_identity_shadow(
+            [BrokenRow()], self.reader(good),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (expected.status, expected.reason),
+            ("UNKNOWN", "INVALID_EXPECTED_PROJECTION"),
+        )
+
+    def test_oversized_or_invalid_unicode_fields_are_not_compared(self):
+        valid = [{"identity_id": "a", "display_name": "A"}]
+        for name in ("x" * 4097, "\ud800"):
+            with self.subTest(name=name[:10]):
+                candidate = compare_identity_shadow(
+                    valid,
+                    self.reader([{"identity_id": "a", "display_name": name}]),
+                    reference_source_commit="9" * 40,
+                    candidate_source_commit="a" * 40,
+                )
+                self.assertEqual(candidate.status, "UNKNOWN")
+                self.assertEqual(candidate.reason, "INVALID_CANDIDATE_PROJECTION")
+
 
 if __name__ == "__main__":
     unittest.main()
