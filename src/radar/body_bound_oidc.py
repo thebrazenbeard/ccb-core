@@ -4,15 +4,50 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Callable
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
 PROVIDER_AUDIENCE_PREFIX = "chat-communication-bus-supabase:"
+_MAX_ERROR_BODY_BYTES = 2048
+_PROVIDER_503_CODES = frozenset({
+    "OIDC_JWKS_UNAVAILABLE",
+    "OIDC_JWKS_INVALID",
+    "TRUSTED_PROJECTOR_SHA_INVALID",
+    "PROJECT_CONCURRENCY_INVALID",
+    "PROVIDER_CONFIGURATION_MISSING",
+})
+_REQUEST_ID_RE = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
 class BodyBoundOidcError(RuntimeError):
     pass
+
+
+def _sanitized_http_failure(exc: HTTPError) -> str:
+    """Capture only bounded allow-listed data; never echo token, URL, body or exception."""
+    status = exc.code if type(exc.code) is int and 100 <= exc.code <= 599 else 0
+    provider_code = "UNKNOWN"
+    try:
+        raw = exc.read(_MAX_ERROR_BODY_BYTES + 1)
+        if status == 503 and len(raw) <= _MAX_ERROR_BODY_BYTES:
+            parsed = json.loads(raw.decode("utf-8"))
+            if isinstance(parsed, dict) and parsed.get("error") in _PROVIDER_503_CODES:
+                provider_code = parsed["error"]
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        pass
+
+    request_id = "UNKNOWN"
+    headers = getattr(exc, "headers", None)
+    if headers is not None:
+        for key in ("sb-request-id", "x-sb-request-id", "x-request-id"):
+            candidate = headers.get(key)
+            if isinstance(candidate, str) and _REQUEST_ID_RE.fullmatch(candidate.lower()):
+                request_id = candidate.lower()
+                break
+    return f"BOUND_PROVIDER_REQUEST_FAILED:HTTP_{status}:{provider_code}:{request_id}"
 
 
 def canonical_json_bytes(payload: object) -> bytes:
@@ -75,8 +110,10 @@ def post_body_bound_json(
     try:
         with opener(request, timeout=timeout) as response:
             raw = response.read()
-    except Exception as exc:
-        raise BodyBoundOidcError(f"BOUND_PROVIDER_REQUEST_FAILED:{exc}") from exc
+    except HTTPError as exc:
+        raise BodyBoundOidcError(_sanitized_http_failure(exc)) from None
+    except Exception:
+        raise BodyBoundOidcError("BOUND_PROVIDER_REQUEST_FAILED:TRANSPORT_ERROR") from None
 
     try:
         result = json.loads(raw.decode("utf-8"))
