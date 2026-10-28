@@ -213,6 +213,71 @@ class ShadowIdentityTests(unittest.TestCase):
                 self.assertEqual(candidate.status, "UNKNOWN")
                 self.assertEqual(candidate.reason, "INVALID_CANDIDATE_PROJECTION")
 
+    def test_spoofed_list_length_cannot_bypass_row_budget(self):
+        class LengthSpoofingRows(list):
+            def __init__(self):
+                super().__init__()
+                self.yielded = 0
+
+            def __len__(self):
+                return 0
+
+            def __iter__(self):
+                for number in range(1_500):
+                    self.yielded += 1
+                    yield {"identity_id": f"id-{number}", "display_name": "Name"}
+
+        valid_reference = [{"identity_id": "a", "display_name": "A"}]
+        malicious_candidate = LengthSpoofingRows()
+        observed = compare_identity_shadow(
+            valid_reference, self.reader(malicious_candidate),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (observed.status, observed.reason),
+            ("UNKNOWN", "INVALID_CANDIDATE_PROJECTION"),
+        )
+        self.assertLessEqual(malicious_candidate.yielded, 1_001)
+
+        self.calls.clear()
+        malicious_reference = LengthSpoofingRows()
+        reference = compare_identity_shadow(
+            malicious_reference, self.reader(valid_reference),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (reference.status, reference.reason),
+            ("UNKNOWN", "INVALID_EXPECTED_PROJECTION"),
+        )
+        self.assertLessEqual(malicious_reference.yielded, 1_001)
+        self.assertEqual(self.calls, [])
+
+    def test_exact_row_budget_stays_unqualified_and_one_extra_is_unknown(self):
+        valid = [
+            {"identity_id": f"id-{number}", "display_name": "Name"}
+            for number in range(1_000)
+        ]
+        matched = compare_identity_shadow(
+            valid, self.reader(list(valid)),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(matched.status, "MATCH_UNQUALIFIED")
+        self.assertFalse(matched.cutover_authorized)
+
+        overflow = valid + [{"identity_id": "extra", "display_name": "Name"}]
+        exceeded = compare_identity_shadow(
+            valid, self.reader(overflow),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual(
+            (exceeded.status, exceeded.reason),
+            ("UNKNOWN", "INVALID_CANDIDATE_PROJECTION"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
