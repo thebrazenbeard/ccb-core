@@ -134,6 +134,15 @@ def compare_identity_shadow(
             candidate_source_commit, None, None
         )
 
+    # An empty reference can agree with an empty target without proving that
+    # the expected CCB identity projection was actually supplied. Refuse that
+    # vacuous match before invoking an operator-controlled reader.
+    if not expected:
+        return ShadowIdentityReport(
+            "UNKNOWN", "EMPTY_EXPECTED_PROJECTION", reference_source_commit,
+            candidate_source_commit, None, None
+        )
+
     expected_digest = _digest(expected)
     try:
         raw = candidate_read(_IDENTITY_SQL, (len(expected) + 1,))

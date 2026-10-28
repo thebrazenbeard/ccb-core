@@ -107,6 +107,18 @@ class ShadowIdentityTests(unittest.TestCase):
         self.assertEqual(result.reason, "INVALID_SOURCE_PIN")
         self.assertEqual(self.calls, [])
 
+    def test_empty_expected_projection_cannot_claim_shadow_match(self):
+        report = compare_identity_shadow(
+            [], self.reader([]),
+            reference_source_commit="9" * 40,
+            candidate_source_commit="a" * 40,
+        )
+        self.assertEqual((report.status, report.reason),
+                         ("UNKNOWN", "EMPTY_EXPECTED_PROJECTION"))
+        self.assertFalse(report.canonical)
+        self.assertFalse(report.cutover_authorized)
+        self.assertEqual(self.calls, [])
+
     def test_expected_identity_content_never_reaches_sql_text(self):
         hostile = "radar'); delete from radar.identities; --"
         report = compare_identity_shadow(

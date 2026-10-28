@@ -25,6 +25,12 @@ reader are **caller assertions**, not source authentication or physical
 database attestation. Extra data in a response such as `canonical=true` is
 ignored as an authority claim.
 
+An empty expected identity set returns `UNKNOWN` with
+`EMPTY_EXPECTED_PROJECTION` without querying the candidate. An empty-vs-empty
+read would otherwise create a vacuous comparison receipt without any identity
+binding. This is a source-only evidence guard, not a new admission rule for a
+live provider.
+
 The future caller must enforce a database statement and connection deadline
 outside this comparator; an injected reader can otherwise block indefinitely.
 The comparator bounds rows and UTF-8 identity field sizes, but cannot prove
