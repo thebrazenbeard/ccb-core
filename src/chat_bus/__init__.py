@@ -9,7 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     # Read the installed package version when available; fall back when running
     # from a source tree (not installed).
-    __version__ = version("chat-communication-bus")
+    __version__ = version("ccb-core")
 except PackageNotFoundError:
     __version__ = "0+unknown"
 
