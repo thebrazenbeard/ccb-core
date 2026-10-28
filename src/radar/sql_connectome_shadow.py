@@ -82,7 +82,11 @@ def _identities(raw: object) -> tuple[tuple[str, str], ...]:
     if not isinstance(raw, (list, tuple)) or len(raw) > _MAX_IDENTITIES:
         raise ValueError("identity projection must be a bounded list or tuple")
     identities: dict[str, str] = {}
-    for row in raw:
+    # A list/tuple subclass may lie about __len__ while yielding more rows.
+    # Enforce the budget during iteration as well as on declared length.
+    for index, row in enumerate(raw):
+        if index >= _MAX_IDENTITIES:
+            raise ValueError("identity projection row budget exceeded")
         if not isinstance(row, Mapping):
             raise ValueError("identity rows must be mappings")
         identity_id, display_name = row.get("identity_id"), row.get("display_name")
