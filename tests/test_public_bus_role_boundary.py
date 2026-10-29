@@ -6,7 +6,7 @@ history, verify hosted custody, or authorize a private provider effect.
 
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_public_bus_role_custody_is_consistent_across_operator_docs():
