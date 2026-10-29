@@ -9,8 +9,8 @@ The intended repository role is **CCB Base**: reusable production code, protocol
 ## Repository split
 
 - **`ccb-core` / CCB Base** — canonical operational code and migration history.
-- **`chat-communication-bus`** — private branch vault and deployment overlay only: private writer lanes, private topology/state, checkpoints, receipts, identity material, and other non-public operational history.
-- A generic runtime fix discovered in the private repository belongs here first. The private repository may consume or pin a CCB Base revision; it must not become a second implementation authority.
+- **`chat-communication-bus`** — now a **public** coordination repository for source-only contracts, release gates, and sanitized operational documentation; it is **not** a private data vault. Private writer lanes, identities, topology, receipts, secrets, and deployment coordinates must be retained in separately access-controlled storage, never in this public Git history.
+- A generic runtime fix discovered through the public coordination repository belongs here first. The coordination repo may consume or pin a CCB Base revision; it must not become a second implementation authority.
 
 See `docs/operator/REPOSITORY_ROLES.md` and `PUBLIC_CORE_BOUNDARY.md`.
 
