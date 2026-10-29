@@ -126,9 +126,15 @@ class SqliteReceiverLedger:
     def close(self) -> None:
         self.connection.close()
 
-    def commit_once(
+    def _record_once(
         self, binding: DeliveryBinding, proof: VerifiedReceiver
-    ) -> ReceiverDeliveryReceipt:
+    ) -> str:
+        """Persist a low-level row; only the verified gate may mint a receipt.
+
+        This is an internal storage operation, not receiver authentication.
+        Callers in the host's Python trust domain can still tamper with SQLite,
+        so runtime isolation and path ACLs remain mandatory.
+        """
         committed_at = datetime.now(timezone.utc).isoformat()
         try:
             with self.connection:
@@ -147,15 +153,7 @@ class SqliteReceiverLedger:
                 )
         except sqlite3.IntegrityError as exc:
             raise DeliveryGateError("DURABLE_REPLAY_REJECTED") from exc
-        return ReceiverDeliveryReceipt(
-            message_id=binding.message_id,
-            recipient=binding.recipient,
-            source_commit=binding.source_commit,
-            content_sha256=binding.content_sha256,
-            principal=proof.principal,
-            proof_id=proof.proof_id,
-            committed_at=committed_at,
-        )
+        return committed_at
 
 
 class AuthenticatedReceiverGate:
@@ -206,7 +204,16 @@ class AuthenticatedReceiverGate:
         if not authorized:
             raise DeliveryGateError("RECEIVER_NOT_AUTHORIZED")
 
-        return self.ledger.commit_once(binding, proof)
+        committed_at = self.ledger._record_once(binding, proof)
+        return ReceiverDeliveryReceipt(
+            message_id=binding.message_id,
+            recipient=binding.recipient,
+            source_commit=binding.source_commit,
+            content_sha256=binding.content_sha256,
+            principal=proof.principal,
+            proof_id=proof.proof_id,
+            committed_at=committed_at,
+        )
 
 
 __all__ = [
