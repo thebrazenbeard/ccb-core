@@ -102,9 +102,22 @@ class SqliteReceiverLedger:
     """
 
     def __init__(self, path: str | Path) -> None:
-        if str(path) == ":memory:":
+        # sqlite3.connect("") silently creates a temporary database whose
+        # uniqueness fence disappears when the connection closes. Also reject
+        # SQLite URI spellings so future callers cannot accidentally enable
+        # URI memory mode or temp databases by changing connect options.
+        if not isinstance(path, (str, Path)):
+            raise DeliveryGateError("DURABLE_LEDGER_PATH_REQUIRED")
+        store_path = str(path)
+        if (
+            not store_path
+            or store_path != store_path.strip()
+            or "\x00" in store_path
+            or store_path == ":memory:"
+            or store_path.casefold().startswith("file:")
+        ):
             raise DeliveryGateError("DURABLE_LEDGER_REQUIRED")
-        self.connection = sqlite3.connect(str(path), timeout=5.0)
+        self.connection = sqlite3.connect(store_path, timeout=5.0, uri=False)
         self.connection.execute(
             """CREATE TABLE IF NOT EXISTS authenticated_receiver_acks (
                 recipient TEXT NOT NULL,
