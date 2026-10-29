@@ -23,6 +23,11 @@ unchanged. It must never be promoted by this module alone.
 Only the immutable `AUTHENTICATED_RECEIVER_ACK_ONLY` receipt is returned.
 `model_response_verified` stays false. A separately instrumented, authenticated
 model invocation/response witness is required to establish model consumption.
+The ledger's internal `_record_once` operation returns only a low-level
+timestamp, not an authenticated receipt. Only the host-verified gate mints
+the receipt after all checks pass. This source-level API distinction does not
+secure arbitrary Python callers or direct SQLite writers; host process
+isolation, ledger ACLs and real verifier custody remain mandatory.
 
 This module deliberately does **not** select provider clients, open sockets,
 discover actors, send messages, grant capabilities, migrate databases, or make
@@ -30,7 +35,8 @@ provider assertions. It is not wired into workstation relay, browser UI,
 private writer branches, or the live Lappy process.
 
 Negative tests cover forged exact plaintext ACK, mismatched canonical bindings,
-unauthorized privacy scope, replay across SQLite restart, and false model claim.
+unauthorized privacy scope, replay across SQLite restart, direct-sink assurance
+bypass and false model claim.
 
 Further admission gates before runtime use: independently qualify an actual
 provider verifier and client credential custody, canonical source readback,
