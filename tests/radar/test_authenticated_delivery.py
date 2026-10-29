@@ -152,6 +152,18 @@ class AuthenticatedDeliveryTests(unittest.TestCase):
         with self.assertRaisesRegex(DeliveryGateError, "DURABLE_LEDGER_REQUIRED"):
             SqliteReceiverLedger(":memory:")
 
+    def test_direct_ledger_call_cannot_mint_authenticated_ack_receipt(self):
+        ledger = SqliteReceiverLedger(self.path)
+        self.addCleanup(ledger.close)
+        # Regression: the previous public commit_once bypassed the host's
+        # source, provider proof, and authorization gates entirely.
+        self.assertFalse(hasattr(ledger, "commit_once"))
+        low_level_result = ledger._record_once(self.binding, self.proof)
+        self.assertIsInstance(low_level_result, str)
+        self.assertFalse(hasattr(low_level_result, "assurance"))
+        # A direct trusted-process SQLite write is still possible; it is NOT
+        # evidence that a receiver or model handled the canonical message.
+
 
 if __name__ == "__main__":
     unittest.main()
