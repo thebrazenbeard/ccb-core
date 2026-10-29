@@ -22,4 +22,4 @@ Retained code is scrubbed of source-owner deployment coordinates and private ide
 
 ## Custody rule
 
-Reusable implementation authority lives here. `chat-communication-bus` may retain private branches and overlays, but it is not a parallel source of truth for generic CCB/Radar code. A private-discovered generic fix must be sanitized, regression-tested, and admitted here before it is treated as operational code.
+Reusable implementation authority lives here. The `chat-communication-bus` repository is now **public** and must contain only sanitized coordination, public-safe contracts and release evidence. It must not hold private branches, writer-lane data, identity records, topology, receipts, credentials or private deployment overlays in its Git history. Authorized deployments keep that state in separately access-controlled storage outside the public repository. A generic fix discovered through public coordination must be sanitized, regression-tested and admitted here before it becomes operational code. Historical public commits require separate exposure remediation; changing this document does not erase them.
