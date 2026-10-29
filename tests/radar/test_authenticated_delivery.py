@@ -4,6 +4,7 @@ from dataclasses import replace
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from radar.authenticated_delivery import (
     AuthenticatedReceiverGate,
@@ -151,6 +152,21 @@ class AuthenticatedDeliveryTests(unittest.TestCase):
     def test_in_memory_ledger_cannot_be_used_as_durable_proof(self):
         with self.assertRaisesRegex(DeliveryGateError, "DURABLE_LEDGER_REQUIRED"):
             SqliteReceiverLedger(":memory:")
+
+    def test_temporary_or_uri_memory_ledger_cannot_bypass_replay_fence(self):
+        # sqlite3.connect("") is a temporary, non-restart-persistent database;
+        # URI paths must fail before any SQLite connection is attempted.
+        forbidden = (
+            "", " ", "\t", " :memory:", "file::memory:?cache=shared",
+            "file:receiver?mode=memory&cache=shared", "FILE:receiver?mode=memory",
+            "not-a-file\x00suffix",
+        )
+        with patch("radar.authenticated_delivery.sqlite3.connect") as connect:
+            for path in forbidden:
+                with self.subTest(path=repr(path)):
+                    with self.assertRaisesRegex(DeliveryGateError, "DURABLE_LEDGER_REQUIRED"):
+                        SqliteReceiverLedger(path)
+            connect.assert_not_called()
 
     def test_direct_ledger_call_cannot_mint_authenticated_ack_receipt(self):
         ledger = SqliteReceiverLedger(self.path)
