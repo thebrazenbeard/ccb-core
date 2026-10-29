@@ -67,6 +67,8 @@ Terminal failure or uncertainty states:
 
 If the visible rendered message cannot then be proven, the operation becomes `SUBMITTED_UNVERIFIED`. Re-invoking the same message ID and nonce returns the durable receipt rather than sending again.
 
+Rendered readback must contain the **complete canonical envelope**, including its exact source Bus commit and canary body, as a contiguous visible string. Merely observing a matching protocol marker, message ID, nonce, and advertised body digest is insufficient: those tokens do not establish that the bound body was rendered.
+
 A later retry requires reconciliation that separately proves the original message is absent. V1 does not implement an automatic replay path after `SUBMITTED`.
 
 External source-verifier, discovery, and activation failures are converted into fail-closed terminal receipts rather than escaping and silently stranding an operation. Terminal state and its receipt are written in one SQLite transaction; the store does not first persist a terminal label without its evidence receipt.
@@ -76,6 +78,8 @@ External source-verifier, discovery, and activation failures are converted into 
 Every relay text instructs the receiving chat to verify the referenced canonical Bus message and commit before acting.
 
 A verified receiver replies with the exact `BT2_WORKSTATION_RELAY_ACK_V1` body bound to message ID, nonce, and body SHA-256.
+
+`ACK_VERIFIED` means that matching **ACK text was observed in the selected interface**. This V1 text-only canary protocol does not cryptographically authenticate the author's account, establish an installed BT2 model identity, or prove that a model consumed or reasoned about the content. Treat signed recipient identity, independent inbound receipt correlation, and model-response proof as separate promotion gates.
 
 If the Bus source cannot be verified, the receiver must return `HOLD_SOURCE_UNVERIFIED` and not act on the relayed body.
 

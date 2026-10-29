@@ -149,12 +149,10 @@ def _transport_text(envelope: RelayEnvelope) -> str:
 def _rendered_matches(envelope: RelayEnvelope, text: str | None) -> bool:
     if not isinstance(text, str):
         return False
-    return all(token in text for token in (
-        PROTOCOL,
-        f"message_id: {envelope.message_id}",
-        f"nonce: {envelope.nonce}",
-        f"body_sha256: {envelope.body_sha256}",
-    ))
+    # A few matching header tokens do not prove that the source-bound payload
+    # or source commit was actually rendered. The full canonical envelope must
+    # be visible as one contiguous unit (transport instructions may follow).
+    return envelope.render() in text
 
 
 class WorkstationRelay:

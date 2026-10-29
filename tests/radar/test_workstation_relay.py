@@ -314,6 +314,43 @@ def test_missing_rendered_readback_is_submitted_unverified_and_not_replayed():
     assert second_target.submits == 0
 
 
+@pytest.mark.parametrize("tamper", ["header_only", "modified_body", "modified_source_commit"])
+def test_rendered_readback_rejects_incomplete_or_tampered_bus_envelope(tamper):
+    """Rendering a few header hints cannot prove the bound Bus message was shown."""
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-render-" + tamper)
+
+    class ForgedRenderTarget(ScriptedTarget):
+        def read_rendered(self, window_handle, target_token, message_id):
+            if tamper == "header_only":
+                return "\n".join((
+                    relay.PROTOCOL,
+                    f"message_id: {envelope.message_id}",
+                    f"nonce: {envelope.nonce}",
+                    f"body_sha256: {envelope.body_sha256}",
+                ))
+            if tamper == "modified_body":
+                return self.written.replace(envelope.body, "BT2_CANARY: marker=wrong-payload")
+            return self.written.replace(envelope.source_bus_commit, "d" * 40)
+
+    target = ForgedRenderTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+    )
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(
+        envelope,
+        descriptor=descriptor,
+        target=target,
+        ack_timeout_seconds=0.01,
+        rendered_readback_timeout_seconds=0.01,
+        rendered_poll_seconds=0.001,
+    )
+    assert receipt.final_state == "SUBMITTED_UNVERIFIED"
+    assert receipt.rendered_message_verified is False
+
+
 @pytest.mark.parametrize(
     ("ack_mode", "expected"),
     [
