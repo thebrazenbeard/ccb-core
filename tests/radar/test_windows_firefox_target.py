@@ -407,7 +407,10 @@ def test_post_submit_readback_reselects_bound_tab_before_observation():
         settle_seconds=0,
     )
     driver.enumerate_tabs(501)
-    driver.read_rendered_message(501, "uia:9,8,7", "msg-1")
+    with pytest.raises(
+        firefox.FirefoxTargetError, match="RENDER_BOUNDARY_UNQUALIFIED"
+    ):
+        driver.read_rendered_message(501, "uia:9,8,7", "msg-1")
     assert tab.selection.selected == 1
 
 
