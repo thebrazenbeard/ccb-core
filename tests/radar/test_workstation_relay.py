@@ -156,6 +156,7 @@ class ScriptedTarget:
     ):
         self.envelope = envelope
         self.snapshots = list(snapshots)
+        self._latest_snapshot = self.snapshots[0]
         self.discoveries = (
             tuple(discoveries)
             if discoveries is not None
@@ -177,8 +178,13 @@ class ScriptedTarget:
 
     def snapshot(self, window_handle, target_token=None):
         if not self.snapshots:
+            # Default test double keeps an already-confirmed target stable
+            # after submit. Drift tests can supply a later snapshot.
+            if self.submits:
+                return self._latest_snapshot
             raise RuntimeError("target disappeared")
-        return self.snapshots.pop(0)
+        self._latest_snapshot = self.snapshots.pop(0)
+        return self._latest_snapshot
 
     def populate(self, window_handle, target_token, text):
         if self.fail_populate:
@@ -273,6 +279,43 @@ def test_target_drift_after_write_aborts_without_submit():
     assert result.final_state == "TARGET_CHANGED_PRE_SUBMIT"
     assert target.written is not None
     assert target.submits == 0
+
+
+@pytest.mark.parametrize("drift", ["path", "identity", "window", "token"])
+def test_target_drift_after_submit_rejects_readback_and_ack(drift):
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-postsubmit-" + drift)
+    changed = {
+        "path": dict(window_handle=99, normalized_url_path="/c/other", visible_identity=snapshot.visible_identity),
+        "identity": dict(window_handle=99, normalized_url_path=snapshot.normalized_url_path, visible_identity="Someone Else"),
+        "window": dict(window_handle=100, normalized_url_path=snapshot.normalized_url_path, visible_identity=snapshot.visible_identity),
+        "token": dict(window_handle=99, normalized_url_path=snapshot.normalized_url_path, visible_identity=snapshot.visible_identity, target_token="uia:other"),
+    }[drift]
+    target = ScriptedTarget(
+        envelope=envelope, snapshots=[snapshot, snapshot, relay.TargetSnapshot(**changed)],
+    )
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"), source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "SUBMITTED_UNVERIFIED"
+    assert result.rendered_message_verified is False
+    assert target.submits == 1
+
+
+def test_target_changes_after_readback_before_ack_rejects_ack():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-after-rendered")
+    drifted = relay.TargetSnapshot(
+        window_handle=99, normalized_url_path="/c/other",
+        visible_identity=snapshot.visible_identity,
+    )
+    target = ScriptedTarget(
+        envelope=envelope, snapshots=[snapshot, snapshot, snapshot, snapshot, drifted],
+    )
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"), source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "SUBMITTED_UNVERIFIED"
+    assert result.rendered_message_verified is True
+    assert target.submits == 1
 
 
 def test_target_disappearing_before_submit_fails_closed():
