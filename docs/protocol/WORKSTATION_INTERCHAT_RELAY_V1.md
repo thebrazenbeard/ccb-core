@@ -69,6 +69,26 @@ If the visible rendered message cannot then be proven, the operation becomes `SU
 
 Rendered readback must contain the **complete canonical envelope**, including its exact source Bus commit and canary body, as a contiguous visible string. Merely observing a matching protocol marker, message ID, nonce, and advertised body digest is insufficient: those tokens do not establish that the bound body was rendered.
 
+**Production Windows/Firefox UIA readback and ACK observation are disabled by
+default**, raising `RENDER_BOUNDARY_UNQUALIFIED` and
+`ACK_BOUNDARY_UNQUALIFIED` respectively. There is no independently qualified
+sent-message/author container in the accessible tree; generic page text cannot
+prove submission or receiver identity. The relay therefore retains
+`SUBMITTED_UNVERIFIED` without replay. An explicit static-text probe is available
+*only* for isolated tests that inject a UIA fake, never an implicitly enabled
+production setting.
+
+That test-only probe records noneditable `TextControl` RuntimeIds and complete
+text before submit. Readback requires **both** a previously unseen RuntimeId
+and unseen exact text, rejecting a remounted stale history item or changed text
+under a reused ID. Editable composer values are excluded, including for ACK.
+This is conservative but still not a proof of a sent-message boundary; UIA may
+virtualize or aggregate page text. The relay also rechecks exact window,
+tab token, path, visible identity, and selector digest after submit, after
+rendered readback, and after ACK. Any drift ends `SUBMITTED_UNVERIFIED` and
+never triggers an automatic replay. Live qualification still needs a
+sender/receiver-scoped witness and negative Enter-no-submit test.
+
 A later retry requires reconciliation that separately proves the original message is absent. V1 does not implement an automatic replay path after `SUBMITTED`.
 
 External source-verifier, discovery, and activation failures are converted into fail-closed terminal receipts rather than escaping and silently stranding an operation. Terminal state and its receipt are written in one SQLite transaction; the store does not first persist a terminal label without its evidence receipt.

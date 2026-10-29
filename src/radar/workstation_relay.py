@@ -314,11 +314,28 @@ class WorkstationRelay:
             return finish("SUBMIT_NOT_ESTABLISHED")
         advance("SUBMITTED")
 
+        def still_bound_after_submit() -> bool:
+            # The selected window/token may have navigated or switched after
+            # Enter was sent. Neither readback nor a textual ACK is credible
+            # if the same exact target is no longer in view. Never replay.
+            try:
+                current = target.snapshot(handle, target_token)
+            except Exception:
+                return False
+            return bool(
+                current.window_handle == handle
+                and current.target_token == target_token
+                and current.matches(descriptor)
+                and current.selector_digest == presubmit_digest
+            )
+
         rendered = None
         rendered_deadline = (
             time.monotonic() + rendered_readback_timeout_seconds
         )
         while True:
+            if not still_bound_after_submit():
+                return finish("SUBMITTED_UNVERIFIED")
             try:
                 rendered = target.read_rendered(
                     handle, target_token, envelope.message_id
@@ -330,6 +347,8 @@ class WorkstationRelay:
                     rendered.encode("utf-8")
                 ).hexdigest()
             if _rendered_matches(envelope, rendered):
+                if not still_bound_after_submit():
+                    return finish("SUBMITTED_UNVERIFIED")
                 break
             remaining = rendered_deadline - time.monotonic()
             if remaining <= 0:
@@ -345,6 +364,8 @@ class WorkstationRelay:
             )
         except Exception:
             ack = None
+        if not still_bound_after_submit():
+            return finish("SUBMITTED_UNVERIFIED")
         if isinstance(ack, str):
             ack_body = ack
             ack_sha256 = hashlib.sha256(ack.encode("utf-8")).hexdigest()
