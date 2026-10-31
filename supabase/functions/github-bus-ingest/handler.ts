@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { provider503LogEvent } from "./provider_503_log.ts";
 
 const OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const JWKS_URL = `${OIDC_ISSUER}/.well-known/jwks`;
@@ -755,8 +756,13 @@ Deno.serve(async (req: Request) => {
     const result = await handleOperation(supabase, raw);
     return response(200, result);
   } catch (error) {
-    if (error instanceof HttpError) return response(error.status, { ok: false, error: error.code });
-    console.error(error);
+    if (error instanceof HttpError) {
+      const diagnostic = provider503LogEvent(error.status, error.code);
+      if (diagnostic !== null) console.warn(diagnostic);
+      return response(error.status, { ok: false, error: error.code });
+    }
+    // Third-party exception strings can include credentials or request content.
+    console.error("RADAR_PROVIDER_INTERNAL_ERROR");
     return response(500, { ok: false, error: "INTERNAL_ERROR" });
   }
 });
