@@ -96,10 +96,11 @@ class RadarRuntime:
         Missing-ID fallbacks hash the bounded sanitized projection. Distinct
         oversized messages can therefore have the same synthetic ID; durable
         DLQ records must be identified by their independent `dlq_item_id`.
-        Explicit caller IDs retain their existing unbounded contract.
+        Explicit caller IDs longer than the wire string budget also use this
+        bounded diagnostic projection rather than being echoed into receipts.
         """
         value = raw.get("message_id")
-        if isinstance(value, str) and value.strip():
+        if type(value) is str and len(value) <= cls._MAX_DLQ_STRING_CHARS and value.strip():
             return value.strip()
         # The raw mapping is untrusted and can contain enormous strings,
         # cyclic graphs, and arbitrarily deep structures. Hash only the
@@ -137,11 +138,15 @@ class RadarRuntime:
         node_budget[0] -= 1
         if depth >= cls._MAX_DLQ_DEPTH:
             return replacement("DEPTH_LIMIT", "<depth-limit>")
-        if isinstance(value, str) and len(value) > cls._MAX_DLQ_STRING_CHARS:
+        if type(value) is str and len(value) > cls._MAX_DLQ_STRING_CHARS:
             return replacement("STRING_LIMIT", "<string-limit>")
-        if value is None or isinstance(value, (str, bool, int, float)):
+        if value is None or type(value) in (str, bool, int, float):
             return value
-        if isinstance(value, (Mapping, list, tuple)):
+        if isinstance(value, Mapping) and type(value) is not dict:
+            return replacement("OPAQUE_TYPE", f"<{type(value).__name__}>")
+        # Native JSON containers have trustworthy width and iteration behavior.
+        # Subclasses can lie about len() or execute code in __iter__.
+        if type(value) in (dict, list, tuple):
             if len(value) > cls._MAX_DLQ_WIDTH:
                 return replacement("WIDTH_LIMIT", "<width-limit>")
             if ancestors is None:
@@ -226,7 +231,29 @@ class RadarRuntime:
         now_ms: int,
         source_locator: str | None = None,
     ) -> RuntimeReceipt:
-        """Classify and admit one raw message into the runtime."""
+        """Classify a bounded native JSON message into the runtime.
+
+        A supplied dead-letter source locator must be a nonblank native string
+        of at most 4,096 characters; invalid locators are rejected before storage.
+        """
+        if source_locator is not None and (
+            type(source_locator) is not str
+            or len(source_locator) > self._MAX_DLQ_STRING_CHARS
+            or not source_locator.strip()
+        ):
+            self.telemetry.increment("dropped")
+            return RuntimeReceipt(
+                state="REJECTED", message_id="radar-invalid-source-locator",
+                errors=("source_locator",),
+            )
+        # Wire messages are native JSON dictionaries. A custom Mapping may
+        # lie about width or execute arbitrary iteration before any budget.
+        if type(raw) is not dict:
+            self.telemetry.increment("dropped")
+            return RuntimeReceipt(
+                state="REJECTED", message_id="radar-invalid-envelope",
+                errors=("envelope",),
+            )
         result = RadarEnvelope.from_mapping(raw)
         message_id = self._raw_message_id(raw)
 
