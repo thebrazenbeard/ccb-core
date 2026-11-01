@@ -89,23 +89,29 @@ class RadarRuntime:
         """Return the V1 middleware payload hash exactly as the dedupe key."""
         return envelope.idempotency_key
 
-    @staticmethod
-    def _raw_message_id(raw: Mapping[str, object]) -> str:
+    @classmethod
+    def _raw_message_id(cls, raw: Mapping[str, object]) -> str:
+        """Return a diagnostic ID, not a unique identity for over-limit input.
+
+        Missing-ID fallbacks hash the bounded sanitized projection. Distinct
+        oversized messages can therefore have the same synthetic ID; durable
+        DLQ records must be identified by their independent `dlq_item_id`.
+        Explicit caller IDs retain their existing unbounded contract.
+        """
         value = raw.get("message_id")
         if isinstance(value, str) and value.strip():
             return value.strip()
-        try:
-            canonical = json.dumps(
-                raw,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-                default=lambda value: f"<{type(value).__name__}>",
-            ).encode("utf-8")
-        except Exception:
-            canonical = repr(sorted((str(key), type(value).__name__) for key, value in raw.items())).encode(
-                "utf-8", errors="replace"
-            )
+        # The raw mapping is untrusted and can contain enormous strings,
+        # cyclic graphs, and arbitrarily deep structures. Hash only the
+        # deterministic, budgeted DLQ projection instead of serializing the
+        # original object before admission's sanitizer runs.
+        canonical = json.dumps(
+            cls._safe_dlq_envelope(raw),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
         return f"radar-dlq-{hashlib.sha256(canonical).hexdigest()[:16]}"
 
     @classmethod
