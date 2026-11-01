@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import threading
@@ -25,8 +25,47 @@ class RuntimeReceipt:
     errors: tuple[str, ...] = ()
 
 
+@dataclass
+class _DlqChanges:
+    """Record sanitizer actions independently of literal payload strings."""
+
+    entries: list[dict[str, str]] = field(default_factory=list)
+    omitted: int = 0
+
+    def mark(self, path: str, reason: str) -> None:
+        if len(self.entries) < 64:
+            self.entries.append({"path": path, "reason": reason})
+        else:
+            self.omitted += 1
+
+    def sidecar(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "schema": "RADAR_DLQ_SANITIZATION_V1",
+            "changes": self.entries,
+        }
+        if self.omitted:
+            result["omitted_changes"] = self.omitted
+        return result
+
+
 class RadarRuntime:
     """Join Radar's admission, queueing, routing, and accounting seams."""
+
+    _MAX_DLQ_DEPTH = 24
+    _MAX_DLQ_WIDTH = 128
+    _MAX_DLQ_NODES = 2_048
+    _MAX_DLQ_STRING_CHARS = 4_096
+    _MAX_DLQ_JSON_BYTES = 65_536
+
+    @staticmethod
+    def _dlq_pointer_segment(segment: str) -> str:
+        return segment.replace("~", "~0").replace("/", "~1")
+
+    @staticmethod
+    def _dlq_root_fallback(reason: str) -> dict[str, object]:
+        changes = _DlqChanges()
+        changes.mark("", reason)
+        return {"_radar_dlq_sanitization": changes.sidecar()}
 
     def __init__(
         self,
@@ -70,21 +109,109 @@ class RadarRuntime:
         return f"radar-dlq-{hashlib.sha256(canonical).hexdigest()[:16]}"
 
     @classmethod
-    def _safe_dlq_value(cls, value: object) -> object:
+    def _safe_dlq_value(
+        cls,
+        value: object,
+        *,
+        depth: int = 0,
+        ancestors: set[int] | None = None,
+        node_budget: list[int] | None = None,
+        changes: _DlqChanges | None = None,
+        path: str = "",
+    ) -> object:
+        def replacement(reason: str, marker: str) -> str:
+            if changes is not None:
+                changes.mark(path, reason)
+            return marker
+
+        if node_budget is None:
+            node_budget = [cls._MAX_DLQ_NODES]
+        if node_budget[0] <= 0:
+            return replacement("NODE_LIMIT", "<node-limit>")
+        node_budget[0] -= 1
+        if depth >= cls._MAX_DLQ_DEPTH:
+            return replacement("DEPTH_LIMIT", "<depth-limit>")
+        if isinstance(value, str) and len(value) > cls._MAX_DLQ_STRING_CHARS:
+            return replacement("STRING_LIMIT", "<string-limit>")
         if value is None or isinstance(value, (str, bool, int, float)):
             return value
-        if isinstance(value, Mapping):
-            return {
-                str(key): cls._safe_dlq_value(item)
-                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-            }
-        if isinstance(value, (list, tuple)):
-            return [cls._safe_dlq_value(item) for item in value]
-        return f"<{type(value).__name__}>"
+        if isinstance(value, (Mapping, list, tuple)):
+            if len(value) > cls._MAX_DLQ_WIDTH:
+                return replacement("WIDTH_LIMIT", "<width-limit>")
+            if ancestors is None:
+                ancestors = set()
+            marker = id(value)
+            if marker in ancestors:
+                return replacement("CYCLE", "<cycle>")
+            ancestors.add(marker)
+            try:
+                if isinstance(value, Mapping):
+                    # JSON object keys are strings. Stringifying arbitrary keys
+                    # can silently merge distinct evidence (1 versus "1").
+                    if any(type(key) is not str for key in value):
+                        return replacement("INVALID_MAP_KEYS", "<invalid-map-keys>")
+                    if any(len(key) > cls._MAX_DLQ_STRING_CHARS for key in value):
+                        return replacement("KEY_LIMIT", "<key-limit>")
+                    return {
+                        key: cls._safe_dlq_value(
+                            item,
+                            depth=depth + 1,
+                            ancestors=ancestors,
+                            node_budget=node_budget,
+                            changes=changes,
+                            path=path + "/" + cls._dlq_pointer_segment(key),
+                        )
+                        for key, item in sorted(value.items())
+                    }
+                return [
+                    cls._safe_dlq_value(
+                        item,
+                        depth=depth + 1,
+                        ancestors=ancestors,
+                        node_budget=node_budget,
+                        changes=changes,
+                        path=path + "/" + str(index),
+                    )
+                    for index, item in enumerate(value)
+                ]
+            finally:
+                ancestors.remove(marker)
+        return replacement("OPAQUE_TYPE", f"<{type(value).__name__}>")
 
     @classmethod
     def _safe_dlq_envelope(cls, raw: Mapping[str, object]) -> dict[str, object]:
-        return {str(key): cls._safe_dlq_value(value) for key, value in raw.items()}
+        if "_radar_dlq_sanitization" in raw:
+            return cls._dlq_root_fallback("RESERVED_KEY")
+        if len(raw) > cls._MAX_DLQ_WIDTH:
+            return cls._dlq_root_fallback("WIDTH_LIMIT")
+        if any(type(key) is not str for key in raw):
+            return cls._dlq_root_fallback("INVALID_MAP_KEYS")
+        if any(len(key) > cls._MAX_DLQ_STRING_CHARS for key in raw):
+            return cls._dlq_root_fallback("KEY_LIMIT")
+        node_budget = [cls._MAX_DLQ_NODES]
+        changes = _DlqChanges()
+        sanitized = {
+            key: cls._safe_dlq_value(
+                value,
+                ancestors={id(raw)},
+                node_budget=node_budget,
+                changes=changes,
+                path="/" + cls._dlq_pointer_segment(key),
+            )
+            for key, value in sorted(raw.items())
+        }
+        if changes.entries or changes.omitted:
+            sanitized["_radar_dlq_sanitization"] = changes.sidecar()
+        try:
+            serialized = json.dumps(
+                sanitized, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            return cls._dlq_root_fallback("NON_JSON_VALUE")
+        if len(serialized) > cls._MAX_DLQ_JSON_BYTES:
+            return cls._dlq_root_fallback("BYTE_LIMIT")
+        return sanitized
 
     def admit(
         self,
