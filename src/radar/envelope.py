@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import uuid
 from typing import Any, List, Mapping, Optional, Tuple
 
@@ -40,6 +41,69 @@ ALLOWED_INTENTS = frozenset(
 DEFAULT_PRIORITY = 3
 MIN_PRIORITY = 0
 MAX_PRIORITY = 4
+
+# These are pre-serialization budgets for admitted JSON wire payloads, not
+# limits for the separately sanitized, durable unknown-taxonomy DLQ records.
+MAX_WIRE_DEPTH = 24
+MAX_WIRE_WIDTH = 128
+MAX_WIRE_NODES = 2_048
+MAX_WIRE_STRING_CHARS = 4_096
+MAX_WIRE_ESTIMATED_BYTES = 65_536
+
+
+def _payload_fits_budget(payload: object) -> bool:
+    """Bound a native JSON tree before json.dumps or metadata normalization.
+
+    The conservative estimate accounts for worst-case JSON character escaping.
+    Only native JSON tree types are accepted; arbitrary Python Mapping objects
+    can lie about their size or run code during iteration/serialization.
+    """
+    stack: list[tuple[object, int, bool]] = [(payload, 0, False)]
+    ancestors: set[int] = set()
+    nodes = 0
+    estimated = 0
+    while stack:
+        value, depth, leaving = stack.pop()
+        if leaving:
+            ancestors.remove(id(value))
+            continue
+        nodes += 1
+        if nodes > MAX_WIRE_NODES or depth >= MAX_WIRE_DEPTH:
+            return False
+        if value is None or type(value) is bool:
+            estimated += 5
+        elif type(value) is str:
+            if len(value) > MAX_WIRE_STRING_CHARS:
+                return False
+            estimated += len(value) * 6 + 2
+        elif type(value) is int:
+            if value.bit_length() > MAX_WIRE_STRING_CHARS * 4:
+                return False
+            estimated += value.bit_length() // 3 + 2
+        elif type(value) is float:
+            if not math.isfinite(value):
+                return False
+            estimated += 32
+        elif type(value) in (dict, list, tuple):
+            if len(value) > MAX_WIRE_WIDTH or id(value) in ancestors:
+                return False
+            ancestors.add(id(value))
+            stack.append((value, depth, True))
+            estimated += len(value) * 2 + 2
+            if type(value) is dict:
+                for key, item in value.items():
+                    if type(key) is not str or len(key) > MAX_WIRE_STRING_CHARS:
+                        return False
+                    estimated += len(key) * 6 + 3
+                    stack.append((item, depth + 1, False))
+            else:
+                for item in value:
+                    stack.append((item, depth + 1, False))
+        else:
+            return False
+        if estimated > MAX_WIRE_ESTIMATED_BYTES:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -88,7 +152,11 @@ class RadarEnvelope:
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object]) -> "EnvelopeResult":
-        """Validate and normalize a raw mapping into a RadarEnvelope."""
+        """Validate native JSON wire data before normalizing a RadarEnvelope."""
+        if type(raw) is not dict:
+            return EnvelopeResult(
+                EnvelopeClassification.REJECTED, None, ("envelope",)
+            )
         errors: List[str] = []
         required = ("schema_version", "sender", "domain", "intent", "payload")
         for field in required:
@@ -128,9 +196,30 @@ class RadarEnvelope:
                 EnvelopeClassification.DLQ, None, tuple(taxonomy_errors)
             )
 
-        normalized = False
+        # Unknown taxonomy is already routed to the bounded DLQ projection.
+        # For valid taxonomy, reject over-budget JSON before materializing its
+        # canonical serialization and idempotency hashes. First protect the
+        # payload, then check the entire wire envelope (including audience,
+        # source_refs, and optional metadata) against the aggregate byte budget.
+        if not _payload_fits_budget(raw["payload"]):
+            return EnvelopeResult(
+                EnvelopeClassification.REJECTED, None, ("payload_budget",)
+            )
 
         message_id_obj = raw.get("message_id")
+        if isinstance(message_id_obj, str) and (
+            type(message_id_obj) is not str or len(message_id_obj) > MAX_WIRE_STRING_CHARS
+        ):
+            return EnvelopeResult(
+                EnvelopeClassification.REJECTED, None, ("message_id",)
+            )
+        if not _payload_fits_budget(raw):
+            return EnvelopeResult(
+                EnvelopeClassification.REJECTED, None, ("envelope_budget",)
+            )
+
+        normalized = False
+
         if isinstance(message_id_obj, str) and message_id_obj.strip():
             message_id = message_id_obj.strip()
         else:
@@ -138,6 +227,10 @@ class RadarEnvelope:
             normalized = True
 
         created_at_obj = raw.get("created_at")
+        if isinstance(created_at_obj, str) and len(created_at_obj) > MAX_WIRE_STRING_CHARS:
+            return EnvelopeResult(
+                EnvelopeClassification.REJECTED, None, ("created_at",)
+            )
         if isinstance(created_at_obj, str) and created_at_obj.strip():
             created_at = created_at_obj.strip()
         else:
@@ -148,7 +241,7 @@ class RadarEnvelope:
         if audience_obj is None:
             audience: Tuple[str, ...] = ()
             normalized = True
-        elif isinstance(audience_obj, (list, tuple)) and all(
+        elif isinstance(audience_obj, (list, tuple)) and len(audience_obj) <= MAX_WIRE_WIDTH and all(
             isinstance(v, str) and v.strip() for v in audience_obj
         ):
             seen: set[str] = set()
@@ -182,7 +275,7 @@ class RadarEnvelope:
         requires_ack = bool(requires_ack_obj)
 
         source_refs_obj = raw.get("source_refs", ())
-        if isinstance(source_refs_obj, (list, tuple)) and all(
+        if isinstance(source_refs_obj, (list, tuple)) and len(source_refs_obj) <= MAX_WIRE_WIDTH and all(
             isinstance(v, str) and bool(v.strip()) for v in source_refs_obj
         ):
             source_refs = tuple(v.strip() for v in source_refs_obj)
@@ -201,7 +294,7 @@ class RadarEnvelope:
         payload = raw["payload"]
         try:
             payload_json = json.dumps(payload, sort_keys=True)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, UnicodeError):
             return EnvelopeResult(
                 EnvelopeClassification.REJECTED, None, ("payload",)
             )
@@ -214,12 +307,17 @@ class RadarEnvelope:
             "intent": intent,
             "payload": payload,
         }
-        canonical_bytes = json.dumps(
-            canonical,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
+        try:
+            canonical_bytes = json.dumps(
+                canonical,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            return EnvelopeResult(
+                EnvelopeClassification.REJECTED, None, ("payload",)
+            )
         content_hash = hashlib.sha256(canonical_bytes).hexdigest()
 
         # Preserve the original middleware contract: deterministic payload-only
@@ -265,7 +363,7 @@ class EnvelopeResult:
 def _required_text(
     value: object, field: str, errors: List[str], casefold: bool = True
 ) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if type(value) is not str or len(value) > MAX_WIRE_STRING_CHARS or not value.strip():
         errors.append(field)
         return ""
     return value.strip().casefold() if casefold else value.strip()
@@ -274,7 +372,7 @@ def _required_text(
 def _optional_text(value: object) -> Optional[str]:
     if value is None:
         return None
-    if isinstance(value, str) and value.strip():
+    if type(value) is str and len(value) <= MAX_WIRE_STRING_CHARS and value.strip():
         return value.strip()
     return None
 
