@@ -98,7 +98,157 @@ def test_unknown_taxonomy_with_unserializable_payload_still_reaches_durable_dlq(
     assert item.message_id == "radar-unknown-opaque-0001"
     assert item.failure_code == "UNKNOWN_TAXONOMY"
     assert item.envelope["payload"] == "<object>"
+    assert item.envelope["_radar_dlq_sanitization"] == {
+        "schema": "RADAR_DLQ_SANITIZATION_V1",
+        "changes": [{"path": "/payload", "reason": "OPAQUE_TYPE"}],
+    }
     assert runtime.telemetry.snapshot().dlq == 1
+
+
+def test_unknown_taxonomy_with_cyclic_payload_is_bounded_and_durably_recorded(tmp_path):
+    runtime = _runtime(tmp_path)
+    cyclic = {}
+    cyclic["itself"] = cyclic
+
+    receipt = runtime.admit(
+        _raw("radar-cyclic-0001", domain="not-a-domain", payload=cyclic),
+        now_ms=1_510,
+    )
+
+    assert receipt.state == "DLQ"
+    assert receipt.dlq_item_id is not None
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    assert item.envelope["payload"] == {"itself": "<cycle>"}
+    assert item.envelope["_radar_dlq_sanitization"]["changes"] == [
+        {"path": "/payload/itself", "reason": "CYCLE"}
+    ]
+
+
+def test_unknown_taxonomy_with_excessive_nesting_does_not_crash_admission(tmp_path):
+    runtime = _runtime(tmp_path)
+    payload = {"leaf": True}
+    for _ in range(1_100):
+        payload = {"next": payload}
+
+    receipt = runtime.admit(
+        _raw("radar-deep-0001", domain="not-a-domain", payload=payload),
+        now_ms=1_520,
+    )
+
+    assert receipt.state == "DLQ"
+    assert receipt.dlq_item_id is not None
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    node = item.envelope["payload"]
+    for _ in range(24):
+        node = node["next"]
+    assert node == "<depth-limit>"
+    assert item.envelope["_radar_dlq_sanitization"]["changes"] == [
+        {"path": "/payload" + "/next" * 24, "reason": "DEPTH_LIMIT"}
+    ]
+
+
+def test_unknown_taxonomy_does_not_silently_collapse_non_string_mapping_keys(tmp_path):
+    runtime = _runtime(tmp_path)
+    collision = {1: "first", "1": "second"}
+
+    receipt = runtime.admit(
+        _raw("radar-key-collision-0001", domain="not-a-domain", payload=collision),
+        now_ms=1_530,
+    )
+
+    assert receipt.state == "DLQ"
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    assert item.envelope["payload"] == "<invalid-map-keys>"
+    assert item.envelope["_radar_dlq_sanitization"]["changes"] == [
+        {"path": "/payload", "reason": "INVALID_MAP_KEYS"}
+    ]
+
+
+def test_literal_sanitizer_marker_is_preserved_without_claimed_transformation(tmp_path):
+    runtime = _runtime(tmp_path)
+    receipt = runtime.admit(
+        _raw("radar-literal-marker-0001", domain="not-a-domain", payload="<width-limit>"),
+        now_ms=1_535,
+    )
+
+    assert receipt.state == "DLQ"
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    assert item.envelope["payload"] == "<width-limit>"
+    assert "_radar_dlq_sanitization" not in item.envelope
+
+
+def test_unknown_taxonomy_wide_payload_has_explicit_truncation_marker(tmp_path):
+    runtime = _runtime(tmp_path)
+    receipt = runtime.admit(
+        _raw("radar-wide-0001", domain="not-a-domain", payload=list(range(1_000))),
+        now_ms=1_540,
+    )
+
+    assert receipt.state == "DLQ"
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    assert item.envelope["payload"] == "<width-limit>"
+    assert item.envelope["_radar_dlq_sanitization"] == {
+        "schema": "RADAR_DLQ_SANITIZATION_V1",
+        "changes": [{"path": "/payload", "reason": "WIDTH_LIMIT"}],
+    }
+
+
+def test_unknown_taxonomy_aggregate_json_bytes_are_bounded(tmp_path):
+    runtime = _runtime(tmp_path)
+    # Width and individual strings are ordinary, but their aggregate is not.
+    wide_text = {f"part-{i:03}": "x" * 1_024 for i in range(100)}
+    receipt = runtime.admit(
+        _raw("radar-byte-limit-0001", domain="not-a-domain", payload=wide_text),
+        now_ms=1_550,
+    )
+
+    assert receipt.state == "DLQ"
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    assert item.envelope == {
+        "_radar_dlq_sanitization": {
+            "schema": "RADAR_DLQ_SANITIZATION_V1",
+            "changes": [{"path": "", "reason": "BYTE_LIMIT"}],
+        },
+    }
+
+
+def test_reserved_sanitization_key_cannot_spoof_internal_metadata(tmp_path):
+    runtime = _runtime(tmp_path)
+    raw = _raw("radar-forged-meta-0001", domain="not-a-domain", payload="ordinary")
+    raw["_radar_dlq_sanitization"] = {
+        "schema": "RADAR_DLQ_SANITIZATION_V1",
+        "changes": [],
+    }
+
+    receipt = runtime.admit(raw, now_ms=1_560)
+    assert receipt.state == "DLQ"
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    assert item.envelope == {
+        "_radar_dlq_sanitization": {
+            "schema": "RADAR_DLQ_SANITIZATION_V1",
+            "changes": [{"path": "", "reason": "RESERVED_KEY"}],
+        },
+    }
+
+
+def test_sanitization_sidecar_escapes_paths_and_bounds_event_count(tmp_path):
+    runtime = _runtime(tmp_path)
+    payload = {"a/b~c": object(), "items": [object() for _ in range(100)]}
+    receipt = runtime.admit(
+        _raw("radar-sidecar-0001", domain="not-a-domain", payload=payload),
+        now_ms=1_570,
+    )
+
+    assert receipt.state == "DLQ"
+    item = runtime.dlq.inspect(receipt.dlq_item_id)
+    assert item.envelope["payload"]["a/b~c"] == "<object>"
+    sidecar = item.envelope["_radar_dlq_sanitization"]
+    assert sidecar["schema"] == "RADAR_DLQ_SANITIZATION_V1"
+    assert sidecar["changes"][0] == {
+        "path": "/payload/a~1b~0c", "reason": "OPAQUE_TYPE"
+    }
+    assert len(sidecar["changes"]) == 64
+    assert sidecar["omitted_changes"] == 37
 
 
 def test_dedupe_uses_payload_hash_across_route_context(tmp_path):
