@@ -156,6 +156,7 @@ class ScriptedTarget:
     ):
         self.envelope = envelope
         self.snapshots = list(snapshots)
+        self._latest_snapshot = self.snapshots[0]
         self.discoveries = (
             tuple(discoveries)
             if discoveries is not None
@@ -177,8 +178,13 @@ class ScriptedTarget:
 
     def snapshot(self, window_handle, target_token=None):
         if not self.snapshots:
+            # Default test double keeps an already-confirmed target stable
+            # after submit. Drift tests can supply a later snapshot.
+            if self.submits:
+                return self._latest_snapshot
             raise RuntimeError("target disappeared")
-        return self.snapshots.pop(0)
+        self._latest_snapshot = self.snapshots.pop(0)
+        return self._latest_snapshot
 
     def populate(self, window_handle, target_token, text):
         if self.fail_populate:
@@ -275,6 +281,43 @@ def test_target_drift_after_write_aborts_without_submit():
     assert target.submits == 0
 
 
+@pytest.mark.parametrize("drift", ["path", "identity", "window", "token"])
+def test_target_drift_after_submit_rejects_readback_and_ack(drift):
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-postsubmit-" + drift)
+    changed = {
+        "path": dict(window_handle=99, normalized_url_path="/c/other", visible_identity=snapshot.visible_identity),
+        "identity": dict(window_handle=99, normalized_url_path=snapshot.normalized_url_path, visible_identity="Someone Else"),
+        "window": dict(window_handle=100, normalized_url_path=snapshot.normalized_url_path, visible_identity=snapshot.visible_identity),
+        "token": dict(window_handle=99, normalized_url_path=snapshot.normalized_url_path, visible_identity=snapshot.visible_identity, target_token="uia:other"),
+    }[drift]
+    target = ScriptedTarget(
+        envelope=envelope, snapshots=[snapshot, snapshot, relay.TargetSnapshot(**changed)],
+    )
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"), source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "SUBMITTED_UNVERIFIED"
+    assert result.rendered_message_verified is False
+    assert target.submits == 1
+
+
+def test_target_changes_after_readback_before_ack_rejects_ack():
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-after-rendered")
+    drifted = relay.TargetSnapshot(
+        window_handle=99, normalized_url_path="/c/other",
+        visible_identity=snapshot.visible_identity,
+    )
+    target = ScriptedTarget(
+        envelope=envelope, snapshots=[snapshot, snapshot, snapshot, snapshot, drifted],
+    )
+    result = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"), source_bus_verifier=lambda _: True,
+    ).run(envelope, descriptor=descriptor, target=target, ack_timeout_seconds=1)
+    assert result.final_state == "SUBMITTED_UNVERIFIED"
+    assert result.rendered_message_verified is True
+    assert target.submits == 1
+
+
 def test_target_disappearing_before_submit_fails_closed():
     relay, envelope, descriptor, snapshot = relay_fixture("edge-disappears")
     target = ScriptedTarget(envelope=envelope, snapshots=[snapshot])
@@ -312,6 +355,43 @@ def test_missing_rendered_readback_is_submitted_unverified_and_not_replayed():
     )
     assert second == first
     assert second_target.submits == 0
+
+
+@pytest.mark.parametrize("tamper", ["header_only", "modified_body", "modified_source_commit"])
+def test_rendered_readback_rejects_incomplete_or_tampered_bus_envelope(tamper):
+    """Rendering a few header hints cannot prove the bound Bus message was shown."""
+    relay, envelope, descriptor, snapshot = relay_fixture("edge-render-" + tamper)
+
+    class ForgedRenderTarget(ScriptedTarget):
+        def read_rendered(self, window_handle, target_token, message_id):
+            if tamper == "header_only":
+                return "\n".join((
+                    relay.PROTOCOL,
+                    f"message_id: {envelope.message_id}",
+                    f"nonce: {envelope.nonce}",
+                    f"body_sha256: {envelope.body_sha256}",
+                ))
+            if tamper == "modified_body":
+                return self.written.replace(envelope.body, "BT2_CANARY: marker=wrong-payload")
+            return self.written.replace(envelope.source_bus_commit, "d" * 40)
+
+    target = ForgedRenderTarget(
+        envelope=envelope,
+        snapshots=[snapshot, snapshot],
+    )
+    receipt = relay.WorkstationRelay(
+        relay.RelayStore(":memory:"),
+        source_bus_verifier=lambda _: True,
+    ).run(
+        envelope,
+        descriptor=descriptor,
+        target=target,
+        ack_timeout_seconds=0.01,
+        rendered_readback_timeout_seconds=0.01,
+        rendered_poll_seconds=0.001,
+    )
+    assert receipt.final_state == "SUBMITTED_UNVERIFIED"
+    assert receipt.rendered_message_verified is False
 
 
 @pytest.mark.parametrize(

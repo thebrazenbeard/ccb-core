@@ -407,7 +407,10 @@ def test_post_submit_readback_reselects_bound_tab_before_observation():
         settle_seconds=0,
     )
     driver.enumerate_tabs(501)
-    driver.read_rendered_message(501, "uia:9,8,7", "msg-1")
+    with pytest.raises(
+        firefox.FirefoxTargetError, match="RENDER_BOUNDARY_UNQUALIFIED"
+    ):
+        driver.read_rendered_message(501, "uia:9,8,7", "msg-1")
     assert tab.selection.selected == 1
 
 
@@ -755,6 +758,7 @@ def test_rendered_readback_cannot_match_message_from_other_tab_document():
         auto_module=FakeAuto,
         window_enumerator=lambda: (501,),
         settle_seconds=0,
+        allow_unqualified_static_text_probe=True,
     )
     driver.enumerate_tabs(501)
 
@@ -763,6 +767,268 @@ def test_rendered_readback_cannot_match_message_from_other_tab_document():
         "uia:42,2,9",
         "msg-decoy",
     ) is None
+
+
+@pytest.mark.parametrize("preexisting_message", [False, True])
+def test_uia_readback_rejects_unsent_composer_and_stale_message(
+    preexisting_message,
+):
+    import radar.windows_firefox_target as firefox
+
+    envelope = (
+        "BT2_WORKSTATION_RELAY_V1\n"
+        "message_id: msg-fresh\n"
+        "nonce: unique\n"
+        "body_sha256: bound\n"
+        "---\n"
+        "canary"
+    )
+
+    class Pattern:
+        def __init__(self, value):
+            self.Value = value
+
+    class Control:
+        IsOffscreen = False
+
+        def __init__(self, kind, name, runtime_id, value=""):
+            self.ControlTypeName = kind
+            self.Name = name
+            self._runtime_id = runtime_id
+            self._value = value
+
+        def GetRuntimeId(self):
+            return self._runtime_id
+
+        def GetValuePattern(self):
+            return Pattern(self._value)
+
+        def SendKeys(self, text, interval=0, waitTime=0):
+            # A successful SendKeys call is not proof that the message sent.
+            return None
+
+    document = object()
+    composer = Control("EditControl", "Ask ChatGPT", [1, 2], envelope)
+    stale = Control("TextControl", envelope, [3, 4])
+    controls = [composer]
+    if preexisting_message:
+        controls.append(stale)
+
+    class FakeAuto:
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            assert control is document
+            return iter((item, 2) for item in controls)
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+        allow_unqualified_static_text_probe=True,
+    )
+    driver._active_document = lambda *_: document
+    driver._composer = lambda *_: composer
+    driver._tabs[(501, "uia:target")] = object()
+    driver.submit_composer(501, "uia:target")
+    if preexisting_message:
+        # Firefox can remount unchanged historical content with a new UIA ID.
+        controls.remove(stale)
+        controls.append(Control("TextControl", envelope, [5, 6]))
+    driver.select_tab = lambda *_: None
+
+    assert driver.read_rendered_message(501, "uia:target", "msg-fresh") is None
+
+
+def test_uia_readback_accepts_new_noninteractive_text_after_submit():
+    import radar.windows_firefox_target as firefox
+
+    envelope = (
+        "BT2_WORKSTATION_RELAY_V1\n"
+        "message_id: msg-fresh\n"
+        "nonce: unique\n"
+        "body_sha256: bound\n"
+        "---\n"
+        "canary"
+    )
+
+    class Control:
+        IsOffscreen = False
+
+        def __init__(self, kind, name, runtime_id):
+            self.ControlTypeName = kind
+            self.Name = name
+            self._runtime_id = runtime_id
+
+        def GetRuntimeId(self):
+            return self._runtime_id
+
+        def GetValuePattern(self):
+            return None
+
+        def SendKeys(self, text, interval=0, waitTime=0):
+            controls.append(rendered)
+
+    document = object()
+    composer = Control("EditControl", "Ask ChatGPT", [1, 2])
+    rendered = Control("TextControl", envelope, [3, 4])
+    controls = [composer]
+
+    class FakeAuto:
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            assert control is document
+            return iter((item, 2) for item in controls)
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+        allow_unqualified_static_text_probe=True,
+    )
+    driver._active_document = lambda *_: document
+    driver._composer = lambda *_: composer
+    driver._tabs[(501, "uia:target")] = object()
+    driver.submit_composer(501, "uia:target")
+    driver.select_tab = lambda *_: None
+
+    assert driver.read_rendered_message(501, "uia:target", "msg-fresh") == envelope
+
+
+def test_uia_production_readback_and_ack_are_default_denied():
+    import radar.windows_firefox_target as firefox
+
+    class FakeAuto:
+        pass
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto, settle_seconds=0, ack_poll_seconds=0.001,
+    )
+    driver.select_tab = lambda *_: None
+
+    try:
+        driver.read_rendered_message(501, "uia:target", "msg-fresh")
+    except firefox.FirefoxTargetError as exc:
+        assert str(exc) == "RENDER_BOUNDARY_UNQUALIFIED"
+    else:
+        raise AssertionError("Unqualified rendered readback must fail closed")
+
+    try:
+        driver.wait_for_ack(501, "uia:target", "msg-fresh", 0.001)
+    except firefox.FirefoxTargetError as exc:
+        assert str(exc) == "ACK_BOUNDARY_UNQUALIFIED"
+    else:
+        raise AssertionError("Unqualified ACK readback must fail closed")
+
+
+def test_uia_readback_rejects_text_mutated_on_preexisting_runtime_id():
+    import radar.windows_firefox_target as firefox
+
+    envelope = "BT2_WORKSTATION_RELAY_V1\nmessage_id: msg-existing\n---\ncanary"
+
+    class Control:
+        IsOffscreen = False
+
+        def __init__(self, kind, name, runtime_id):
+            self.ControlTypeName = kind
+            self.Name = name
+            self.runtime_id = runtime_id
+
+        def GetRuntimeId(self):
+            return self.runtime_id
+
+        def GetValuePattern(self):
+            return None
+
+        def SendKeys(self, text, interval=0, waitTime=0):
+            # Virtualized text control repurposed by UI redraw; not proof that
+            # this relay submission created a new message.
+            old_static.Name = envelope
+
+    document = object()
+    composer = Control("EditControl", "Ask ChatGPT", [1, 2])
+    old_static = Control("TextControl", "unrelated old content", [3, 4])
+
+    class FakeAuto:
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            assert control is document
+            return iter(((composer, 2), (old_static, 2)))
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+        allow_unqualified_static_text_probe=True,
+    )
+    driver._active_document = lambda *_: document
+    driver._composer = lambda *_: composer
+    driver._tabs[(501, "uia:target")] = object()
+    driver.submit_composer(501, "uia:target")
+    driver.select_tab = lambda *_: None
+
+    assert driver.read_rendered_message(501, "uia:target", "msg-existing") is None
+
+
+@pytest.mark.parametrize("remount_stale_ack", [False, True])
+def test_uia_ack_does_not_accept_unsent_or_remounted_stale_text(
+    remount_stale_ack,
+):
+    import radar.windows_firefox_target as firefox
+
+    ack = (
+        "BT2_WORKSTATION_RELAY_ACK_V1\n"
+        "message_id: msg-fresh\n"
+        "nonce: unique\n"
+        "body_sha256: bound\n"
+        "status: RECEIVED_VERIFIED"
+    )
+
+    class Pattern:
+        Value = ack
+
+    class Composer:
+        IsOffscreen = False
+
+        def __init__(self, kind, name, runtime_id):
+            self.ControlTypeName = kind
+            self.Name = name
+            self.runtime_id = runtime_id
+
+        def GetRuntimeId(self):
+            return self.runtime_id
+
+        def GetValuePattern(self):
+            return Pattern() if self.ControlTypeName == "EditControl" else None
+
+        def SendKeys(self, text, interval=0, waitTime=0):
+            return None
+
+    document = object()
+    composer = Composer("EditControl", "Ask ChatGPT", [1, 2])
+    stale = Composer("TextControl", ack, [3, 4])
+    controls = [composer]
+    if remount_stale_ack:
+        controls.append(stale)
+
+    class FakeAuto:
+        @staticmethod
+        def WalkControl(control, includeTop=False, maxDepth=0):
+            assert control is document
+            return iter((item, 2) for item in controls)
+
+    driver = firefox.UiautomationFirefoxDriver(
+        auto_module=FakeAuto,
+        settle_seconds=0,
+        ack_poll_seconds=0.001,
+        allow_unqualified_static_text_probe=True,
+    )
+    driver._active_document = lambda *_: document
+    driver._composer = lambda *_: composer
+    driver._tabs[(501, "uia:target")] = object()
+    driver.submit_composer(501, "uia:target")
+    if remount_stale_ack:
+        controls.remove(stale)
+        controls.append(Composer("TextControl", ack, [5, 6]))
+    driver.select_tab = lambda *_: None
+
+    assert driver.wait_for_ack(501, "uia:target", "msg-fresh", 0.001) is None
 
 
 def test_uia_set_value_falls_back_to_legacy_when_value_pattern_returns_false():

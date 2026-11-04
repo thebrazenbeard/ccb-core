@@ -118,6 +118,9 @@ class UiautomationFirefoxDriver:
         settle_seconds: float = 0.15,
         ack_poll_seconds: float = 0.25,
         max_depth: int = 18,
+        # No production UIA sent-message role/author boundary has been proven.
+        # This probe is strictly for isolated tests with an injected backend.
+        allow_unqualified_static_text_probe: bool = False,
         composer_names: tuple[str, ...] = (
             "Ask ChatGPT",
             "Message ChatGPT",
@@ -136,7 +139,14 @@ class UiautomationFirefoxDriver:
                 ) from exc
         if settle_seconds < 0 or ack_poll_seconds <= 0 or max_depth < 1:
             raise FirefoxTargetError("INVALID_UIA_DRIVER_CONFIGURATION")
+        if allow_unqualified_static_text_probe and not auto_module_injected:
+            raise FirefoxTargetError(
+                "UNQUALIFIED_READBACK_ONLY_WITH_INJECTED_AUTOMATION"
+            )
         self.auto = auto_module
+        self._allow_unqualified_static_text_probe = bool(
+            allow_unqualified_static_text_probe
+        )
         if window_enumerator is None and not auto_module_injected and _is_windows():
             window_enumerator = _win32_firefox_window_handles
         self.window_enumerator = window_enumerator
@@ -147,6 +157,12 @@ class UiautomationFirefoxDriver:
             name.casefold() for name in composer_names if name.strip()
         )
         self._tabs: dict[tuple[int, str], object] = {}
+        # Bind readback to static text that appeared after this tab's most
+        # recent submit attempt. Editable composer values are never evidence
+        # that a message was delivered.
+        self._submit_text_baselines: dict[
+            tuple[int, str], tuple[frozenset[str], frozenset[str]]
+        ] = {}
 
     def _window(self, window_handle: int):
         control = self.auto.ControlFromHandle(window_handle)
@@ -451,32 +467,56 @@ class UiautomationFirefoxDriver:
     def submit_composer(self, window_handle: int, target_token: str) -> None:
         self._tab_control(window_handle, target_token)
         composer = self._composer(window_handle, target_token)
+        key = (window_handle, target_token)
+        # Capture before SendKeys, which may return without any actual submit.
+        # If a static message already exists in history, it cannot qualify as
+        # the result of this attempt merely because the text matches.
+        observed_before_submit = self._visible_static_texts(
+            window_handle, target_token
+        )
+        self._submit_text_baselines[key] = (
+            frozenset(token for token, _text in observed_before_submit),
+            frozenset(text for _token, text in observed_before_submit),
+        )
         try:
             composer.SendKeys("{Enter}", interval=0, waitTime=0)
         except Exception as exc:
+            self._submit_text_baselines.pop(key, None)
             raise FirefoxTargetError("SUBMIT_NOT_ESTABLISHED") from exc
 
-    def _accessible_texts(
+    def _visible_static_texts(
         self,
         window_handle: int,
         target_token: str,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, str], ...]:
+        """Return identity-bound noneditable UIA text, excluding the composer.
+
+        TextControl is deliberately conservative. If a Firefox/ChatGPT build
+        exposes sent content only through editable or aggregate controls,
+        source-only readback fails closed until its real UIA tree is qualified.
+        """
         document = self._active_document(window_handle, target_token)
-        texts: list[str] = []
+        texts: list[tuple[str, str]] = []
         for control, _depth in self.auto.WalkControl(
             document,
-            includeTop=True,
+            includeTop=False,
             maxDepth=self.max_depth,
         ):
             try:
+                if (
+                    control.ControlTypeName != "TextControl"
+                    or bool(control.IsOffscreen)
+                ):
+                    continue
+                token = self._runtime_token(control)
                 name = str(control.Name or "").strip()
             except Exception:
-                name = ""
+                continue
             if name:
-                texts.append(name)
+                texts.append((token, name))
             value = self._value(control)
             if value:
-                texts.append(value)
+                texts.append((token, value))
         return tuple(dict.fromkeys(texts))
 
     def read_rendered_message(
@@ -486,7 +526,18 @@ class UiautomationFirefoxDriver:
         message_id: str,
     ) -> str | None:
         self.select_tab(window_handle, target_token)
-        for text in self._accessible_texts(window_handle, target_token):
+        if not self._allow_unqualified_static_text_probe:
+            raise FirefoxTargetError("RENDER_BOUNDARY_UNQUALIFIED")
+        baseline = self._submit_text_baselines.get((window_handle, target_token))
+        if baseline is None:
+            return None
+        prior_tokens, prior_texts = baseline
+        for token, text in self._visible_static_texts(window_handle, target_token):
+            # A reused UIA control can change its text; a remounted history
+            # item can keep its text but change runtime ID. Neither is fresh
+            # message evidence. Require both token AND content to be new.
+            if token in prior_tokens or text in prior_texts:
+                continue
             if (
                 "BT2_WORKSTATION_RELAY_V1" in text
                 and f"message_id: {message_id}" in text
@@ -503,10 +554,22 @@ class UiautomationFirefoxDriver:
     ) -> str | None:
         if timeout_seconds <= 0:
             raise FirefoxTargetError("INVALID_ACK_TIMEOUT")
+        if not self._allow_unqualified_static_text_probe:
+            raise FirefoxTargetError("ACK_BOUNDARY_UNQUALIFIED")
         deadline = time.monotonic() + timeout_seconds
         while True:
             self.select_tab(window_handle, target_token)
-            for text in self._accessible_texts(window_handle, target_token):
+            baseline = self._submit_text_baselines.get(
+                (window_handle, target_token)
+            )
+            if baseline is None:
+                return None
+            prior_tokens, prior_texts = baseline
+            for token, text in self._visible_static_texts(
+                window_handle, target_token
+            ):
+                if token in prior_tokens or text in prior_texts:
+                    continue
                 if (
                     "BT2_WORKSTATION_RELAY_ACK_V1" in text
                     and f"message_id: {message_id}" in text
