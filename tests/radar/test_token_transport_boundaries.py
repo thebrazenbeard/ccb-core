@@ -6,8 +6,10 @@ These tests never use real credentials or an external provider.
 from __future__ import annotations
 
 from contextlib import ExitStack
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request
 import json
 import os
@@ -15,6 +17,8 @@ from threading import Thread
 import unittest
 from unittest.mock import patch
 
+from radar.body_bound_oidc import post_body_bound_json
+from radar.central_projection import ProviderProjectionClient
 from radar.credential_transport import open_without_redirect
 from radar.github_actions_oidc import GithubActionsOidcError, request_github_actions_oidc_token
 
@@ -45,8 +49,8 @@ class _SyntheticResponse:
     def __init__(self, payload: bytes):
         self.payload = payload
 
-    def read(self, max_bytes: int) -> bytes:
-        return self.payload[:max_bytes]
+    def read(self, max_bytes: int = -1) -> bytes:
+        return self.payload if max_bytes < 0 else self.payload[:max_bytes]
 
     def __enter__(self):
         return self
@@ -129,6 +133,76 @@ class TransportBoundaryTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(GithubActionsOidcError, "GITHUB_OIDC_RESPONSE_TOO_LARGE"):
                 request_github_actions_oidc_token("synthetic-audience")
+
+    def test_synthetic_oidc_to_provider_cursor_composition(self):
+        """Source composition only: no provider POST redirect or deployment claim."""
+        env = {
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://pipelines.actions.githubusercontent.com/oidc",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "synthetic-runner-secret",
+        }
+        observed_oidc = []
+        observed_provider = []
+
+        def fake_oidc(request, *, timeout):
+            observed_oidc.append(request)
+            return _SyntheticResponse(b'{"value":"synthetic-provider-token"}')
+
+        def fake_provider(request, *, timeout):
+            observed_provider.append(request)
+            return _SyntheticResponse(b'{"ok":true,"lane":{"identity":"synthetic"}}')
+
+        client = ProviderProjectionClient(
+            "https://synthetic-provider.example.invalid/projection",
+            token_provider=request_github_actions_oidc_token,
+            transport=lambda endpoint, payload, *, token_provider: post_body_bound_json(
+                endpoint,
+                payload,
+                token_provider=token_provider,
+                opener=fake_provider,
+            ),
+        )
+        with patch.dict(os.environ, env), patch(
+            "radar.github_actions_oidc.open_without_redirect", side_effect=fake_oidc
+        ):
+            self.assertEqual(client.get_lane("synthetic", "main"), {"identity": "synthetic"})
+
+        self.assertEqual(len(observed_oidc), 1)
+        self.assertEqual(len(observed_provider), 1)
+        provider_request = observed_provider[0]
+        body_digest = hashlib.sha256(provider_request.data).hexdigest()
+        query = parse_qs(urlsplit(observed_oidc[0].full_url).query)
+        self.assertEqual(query["audience"], [f"chat-communication-bus-supabase:{body_digest}"])
+        provider_headers = {key.lower(): value for key, value in provider_request.header_items()}
+        self.assertEqual(provider_headers["authorization"], "Bearer synthetic-provider-token")
+        self.assertEqual(provider_headers["x-radar-body-sha256"], body_digest)
+        self.assertEqual(json.loads(provider_request.data)["operation"], "cursor")
+
+    def test_untrusted_oidc_origin_stops_composed_provider_request(self):
+        """Reject before any downstream provider opener can be invoked."""
+        env = {
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://untrusted.example.invalid/oidc",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "synthetic-runner-secret",
+        }
+        sent = []
+
+        def fake_provider(request, *, timeout):
+            sent.append(request)
+            return _SyntheticResponse(b'{"ok":true}')
+
+        client = ProviderProjectionClient(
+            "https://synthetic-provider.example.invalid/projection",
+            token_provider=request_github_actions_oidc_token,
+            transport=lambda endpoint, payload, *, token_provider: post_body_bound_json(
+                endpoint,
+                payload,
+                token_provider=token_provider,
+                opener=fake_provider,
+            ),
+        )
+        with patch.dict(os.environ, env):
+            with self.assertRaisesRegex(GithubActionsOidcError, "GITHUB_OIDC_HOST_UNTRUSTED"):
+                client.get_lane("synthetic", "main")
+        self.assertEqual(sent, [])
 
 
 if __name__ == "__main__":
