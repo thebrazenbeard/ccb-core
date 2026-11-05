@@ -1,5 +1,8 @@
 # Radar Coordination Protocol V2
 
+
+> **Currentness correction (2026-11-05; source-only):** The Messaging section below preserves a pre-public-transition private-hub directive as historical protocol evidence. It is **not** an active private mailbox address, authenticated writer lane, deployment route, or permission to publish work-bearing/private messages on public GitHub. The current repository split is authoritative: [CCB Base](../../README.md) owns reusable mechanisms; [repository roles](../operator/REPOSITORY_ROLES.md) place confidential topology, identities, message contents, and receipts exclusively in separately access-controlled private overlays. Public `thebrazenbeard/chat-communication-bus` issues and PRs may carry sanitized coordination and source references only. A private delivery channel remains **UNQUALIFIED** until actual authenticated route and receipt readback. Nothing in this document authorizes activating one.
+
 Source provenance: graduated from `bus/protocol-v2@884dbf7b2aeafe56d153b6553257b49b125f562b`. Historical branch remains intact.
 
 ## Purpose
