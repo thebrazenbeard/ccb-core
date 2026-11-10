@@ -14,7 +14,7 @@ workstation-relay = [
     "uiautomation==2.0.29; sys_platform == \"win32\"",
 ]
 test = [
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     "colorama==0.4.6; sys_platform == \"win32\"",
     "iniconfig==2.3.0",
     "packaging==26.3",
