@@ -5,7 +5,16 @@ from __future__ import annotations
 import json
 import os
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from .credential_transport import (
+    CredentialTransportError,
+    open_without_redirect,
+    validate_https_destination,
+)
+
+
+MAX_OIDC_RESPONSE_BYTES = 64 * 1024
 
 
 class GithubActionsOidcError(RuntimeError):
@@ -27,6 +36,11 @@ def request_github_actions_oidc_token(audience: str) -> str:
     if not request_url or not request_token:
         raise GithubActionsOidcError("GITHUB_OIDC_CONTEXT_MISSING")
 
+    try:
+        validate_https_destination(request_url, github_oidc=True)
+    except CredentialTransportError as exc:
+        raise GithubActionsOidcError(str(exc)) from exc
+
     request = Request(
         _audience_url(request_url, audience),
         headers={
@@ -35,10 +49,12 @@ def request_github_actions_oidc_token(audience: str) -> str:
         },
     )
     try:
-        with urlopen(request, timeout=20) as response:
-            raw = response.read()
-    except Exception as exc:
-        raise GithubActionsOidcError(f"GITHUB_OIDC_REQUEST_FAILED:{exc}") from exc
+        with open_without_redirect(request, timeout=20) as response:
+            raw = response.read(MAX_OIDC_RESPONSE_BYTES + 1)
+    except Exception:
+        raise GithubActionsOidcError("GITHUB_OIDC_REQUEST_FAILED") from None
+    if len(raw) > MAX_OIDC_RESPONSE_BYTES:
+        raise GithubActionsOidcError("GITHUB_OIDC_RESPONSE_TOO_LARGE")
     try:
         body = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
