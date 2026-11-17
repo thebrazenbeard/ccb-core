@@ -19,6 +19,23 @@ class CentralProjectionError(RuntimeError):
     pass
 
 
+# Only source-defined, non-sensitive provider error codes may leave this trust boundary.
+# A HTTP 200 with ok=false is already outside the current Edge success contract;
+# unknown/malformed codes must remain opaque rather than becoming log content.
+_SAFE_PROVIDER_ERROR_CODES = frozenset({
+    "OIDC_JWKS_UNAVAILABLE",
+    "OIDC_JWKS_INVALID",
+    "TRUSTED_PROJECTOR_SHA_INVALID",
+    "PROJECT_CONCURRENCY_INVALID",
+    "PROVIDER_CONFIGURATION_MISSING",
+    "INTERNAL_ERROR",
+})
+
+
+def _safe_provider_error_code(value: object) -> str:
+    return value if isinstance(value, str) and value in _SAFE_PROVIDER_ERROR_CODES else "UNKNOWN"
+
+
 def _git(repo_dir: Path, *args: str) -> str:
     try:
         return subprocess.check_output(
@@ -162,8 +179,8 @@ class ProviderProjectionClient:
             token_provider=self.token_provider,
         )
         if not isinstance(result, dict) or result.get("ok") is not True:
-            code = result.get("error") if isinstance(result, dict) else None
-            raise CentralProjectionError(f"PROVIDER_OPERATION_FAILED:{operation}:{code or 'UNKNOWN'}")
+            code = _safe_provider_error_code(result.get("error")) if isinstance(result, dict) else "UNKNOWN"
+            raise CentralProjectionError(f"PROVIDER_OPERATION_FAILED:{operation}:{code}")
         return result
 
     def get_lane(self, identity: str, branch: str) -> dict[str, object] | None:
